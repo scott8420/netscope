@@ -48,6 +48,7 @@ void Shell::build_shell() {  // zone: window + sidebar + stack
 }
 
 void Shell::build_pages() {  // zone: the pattern pages
+    build_devices_page();   // s002 -- first: it is the app now
     // Page 1 -- Recents: a live list + explanation. The menu's Open-recent
     // submenu and this list are the same data, two surfaces (CANON: two
     // surfaces, one mechanism).
@@ -90,43 +91,33 @@ void Shell::build_pages() {  // zone: the pattern pages
     reg->append(*reg_intro);
     reg->append(*dump_btn);
     m_stack.add(*reg, "registry", "Registry");
-
-    build_undo_page();   // s046
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The Undo page (s046) -- the undo stone, exercised. A list of stones; every
-// button, the name field and the size slider are user choices, and every one
-// is a step (core/Undo.hpp, docs/undo.md). Try: delete a stone and press
-// Ctrl+Z without clicking anything; drag the slider and undo once; tap the
-// arrow keys on the slider and undo once.
+// The Devices page (s002). The list is the join of what the network said and
+// what Scott chose (core::rows). The nickname, Favourite and Hide are choices,
+// and every one is an undo step (core/Undo.hpp, docs/undo.md); "Show hidden"
+// is a view and is not. Today the devices come from FixtureSource through the
+// real feed seam; s003 swaps in Avahi.
 // ─────────────────────────────────────────────────────────────────────────────
-void Shell::build_undo_page() {  // zone: the Undo page
-    m_undo_page.set_margin(12);
-
-    auto intro = Gtk::make_managed<Gtk::Label>();
-    intro->set_wrap(true);
-    intro->set_xalign(0.0f);
-    intro->set_markup(
-        "<b>Undo</b> -- every user choice is a step, through one door.\n\n"
-        "Add, delete, move, rename, resize: <b>Ctrl+Z</b> takes any of them back, "
-        "from anywhere but a text box (the name field keeps its own). A slider "
-        "<i>drag</i> is one step; arrow presses within 1.5 s merge into one. See "
-        "core/Undo.hpp and docs/undo.md.");
-    m_undo_page.append(*intro);
+void Shell::build_devices_page() {  // zone: the Devices page
+    m_devices_page.set_margin(12);
 
     // Verbs.
     auto verbs = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
-    const auto verb = [&](const char* label, const char* action, const char* name) {
-        auto b = Gtk::make_managed<Gtk::Button>(label);
-        b->set_name(name);
-        b->set_action_name(action);
-        verbs->append(*b);
-    };
-    verb("Add", "win.stone-add", "shell.undo.add");
-    verb("Delete", "win.stone-delete", "shell.undo.delete");
-    verb("Up", "win.stone-up", "shell.undo.up");
-    verb("Down", "win.stone-down", "shell.undo.down");
+    m_fav_button.set_label("Favourite");
+    m_fav_button.set_action_name("win.device-favourite");
+    m_hide_button.set_label("Hide");
+    m_hide_button.set_action_name("win.device-hide");
+    verbs->append(m_fav_button);
+    verbs->append(m_hide_button);
+    m_diag_button.set_label("Diagnose");
+    m_diag_button.set_tooltip_text("Address, route and port checks for the selected device");
+    m_diag_button.set_action_name("win.device-diagnose");
+    verbs->append(m_diag_button);
+    m_show_hidden_check.set_label("Show hidden");
+    m_show_hidden_check.signal_toggled().connect(sigc::mem_fun(*this, &Shell::on_show_hidden));
+    verbs->append(m_show_hidden_check);
     auto spacer = Gtk::make_managed<Gtk::Box>();
     spacer->set_hexpand(true);
     verbs->append(*spacer);
@@ -136,62 +127,50 @@ void Shell::build_undo_page() {  // zone: the Undo page
     m_redo_button.set_action_name("win.redo");
     verbs->append(m_undo_button);
     verbs->append(m_redo_button);
-    m_undo_page.append(*verbs);
+    m_devices_page.append(*verbs);
 
     // The list.
     auto scroll = Gtk::make_managed<Gtk::ScrolledWindow>();
     scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     scroll->set_vexpand(true);
-    scroll->set_child(m_stone_list);
-    m_stone_list.set_selection_mode(Gtk::SelectionMode::SINGLE);
-    m_stone_list.signal_row_selected().connect([this](Gtk::ListBoxRow* row) {
-        if (m_painting) return;
-        m_sel = row ? std::string(row->get_name()) : std::string{};
-        repaint_stones();   // the detail fields follow the selection
+    scroll->set_child(m_device_list);
+    m_device_list.set_selection_mode(Gtk::SelectionMode::SINGLE);
+    m_device_list.signal_row_selected().connect([this](Gtk::ListBoxRow* row) {
+        if (m_painting || !row) return;
+        m_sel = row->get_name();
+        queue_devices_repaint();   // the detail follows the selection
     });
-    m_undo_page.append(*scroll);
+    m_devices_page.append(*scroll);
 
-    // Detail: name + size.
+    // The detail: the facts, then the nickname.
+    m_device_facts.set_xalign(0.0f);
+    m_device_facts.set_selectable(true);
+    m_device_facts.set_text("Looking for devices\u2026");
+    m_devices_page.append(m_device_facts);
+
     auto detail = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
-    auto nl = Gtk::make_managed<Gtk::Label>("Name");
-    m_stone_name.set_hexpand(true);
-    m_stone_name.set_valign(Gtk::Align::CENTER);
-    m_stone_name.signal_activate().connect(sigc::mem_fun(*this, &Shell::on_stone_rename));
+    auto nl = Gtk::make_managed<Gtk::Label>("Nickname");
+    nl->set_valign(Gtk::Align::CENTER);
+    m_device_name.set_hexpand(true);
+    m_device_name.set_valign(Gtk::Align::CENTER);
+    m_device_name.signal_activate().connect(sigc::mem_fun(*this, &Shell::on_device_rename));
     auto leave = Gtk::EventControllerFocus::create();
-    leave->signal_leave().connect(sigc::mem_fun(*this, &Shell::on_stone_rename));
-    m_stone_name.add_controller(leave);
-    auto sl = Gtk::make_managed<Gtk::Label>("Size");
-    m_stone_size.set_range(1, 10);
-    m_stone_size.set_increments(1, 1);
-    m_stone_size.set_digits(0);
-    m_stone_size.set_round_digits(0);
-    m_stone_size.set_draw_value(true);
-    m_stone_size.set_size_request(180, -1);
-    m_stone_size.set_valign(Gtk::Align::CENTER);
-    m_stone_size.signal_value_changed().connect(sigc::mem_fun(*this, &Shell::on_stone_size));
-    // A drag is ONE step: open the gesture at press, close it at release.
-    // CAPTURE, so it sees the press before the slider's own gesture claims
-    // it; a claimed sequence arrives here as cancel -- also the end.
-    auto drag = Gtk::GestureDrag::create();
-    drag->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
-    drag->signal_drag_begin().connect([this](double, double) {
-        if (!m_sel.empty()) core::stones::drag_begin(m_journal, m_stones, m_sel);
-    });
-    const auto end = [this]() { core::stones::drag_end(m_journal); };
-    drag->signal_drag_end().connect([end](double, double) { end(); });
-    drag->signal_cancel().connect([end](const Gdk::EventSequence*) { end(); });
-    m_stone_size.add_controller(drag);
+    leave->signal_leave().connect(sigc::mem_fun(*this, &Shell::on_device_rename));
+    m_device_name.add_controller(leave);
     detail->append(*nl);
-    detail->append(m_stone_name);
-    detail->append(*sl);
-    detail->append(m_stone_size);
-    m_undo_page.append(*detail);
+    detail->append(m_device_name);
+    m_devices_page.append(*detail);
+
+    m_diag_said.set_xalign(0.0f);
+    m_diag_said.set_wrap(true);
+    m_diag_said.set_selectable(true);
+    m_devices_page.append(m_diag_said);
 
     m_undo_said.set_xalign(0.0f);
     m_undo_said.add_css_class("dim-label");
-    m_undo_page.append(m_undo_said);
+    m_devices_page.append(m_undo_said);
 
-    m_stack.add(m_undo_page, "undo", "Undo");
+    m_stack.add(m_devices_page, "devices", "Devices");
 }
 
 Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model

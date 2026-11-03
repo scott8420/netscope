@@ -5,6 +5,7 @@
 #include <giomm/simpleactiongroup.h>
 #include <gtkmm/eventcontrollerkey.h>
 #include <glibmm/variant.h>
+#include <glibmm/miscutils.h>
 
 #include <filesystem>
 
@@ -43,32 +44,42 @@ void Shell::bind_actions() {  // bindings: actions + recents group
     // Now that the group exists, load the persisted list (prunes stale folders).
     m_recents = core::load_recents(m_recents_file);
 
-    // ── s046: the undo stone ────────────────────────────────────────────────
-    // Undo / Redo are held so update_undo_ui can grey them; the stone verbs
+    // ── s002: the Devices page ──────────────────────────────────────────────
+    // Undo / Redo are held so update_undo_ui can grey them; the device verbs
     // are plain actions the page's buttons name.
     m_act_undo = add_action("undo", sigc::mem_fun(*this, &Shell::on_undo));
     m_act_redo = add_action("redo", sigc::mem_fun(*this, &Shell::on_redo));
-    add_action("stone-add",    sigc::mem_fun(*this, &Shell::on_stone_add));
-    add_action("stone-delete", sigc::mem_fun(*this, &Shell::on_stone_delete));
-    add_action("stone-up",     sigc::mem_fun(*this, &Shell::on_stone_up));
-    add_action("stone-down",   sigc::mem_fun(*this, &Shell::on_stone_down));
+    add_action("device-favourite", sigc::mem_fun(*this, &Shell::on_device_favourite));
+    add_action("device-hide",      sigc::mem_fun(*this, &Shell::on_device_hide));
+    add_action("device-diagnose",  sigc::mem_fun(*this, &Shell::on_device_diagnose));
+    m_diag_ready.connect(sigc::mem_fun(*this, &Shell::on_diagnose_done));
 
-    // The model <-> journal <-> UI wiring. The store asks the journal whether
-    // the door is open (the one-door guard); the journal reads the selection
-    // and tells the UI when Undo / Redo change; the store's changes repaint.
-    m_stones.set_door([this] { return m_journal.open(); });
-    m_stones.set_on_change([this] { queue_stones_repaint(); });
+    // The model <-> journal <-> UI wiring. Choices ask the journal whether the
+    // door is open (the one-door guard); the journal reads the selection and
+    // tells the UI when Undo / Redo change; either table's changes repaint.
+    m_choices.set_door([this] { return m_journal.open(); });
+    // Saved choices come back first (a load: not a step), then every change --
+    // a verb, an undo, a redo -- is written straight back. The UI resolves
+    // the XDG path; the core owns the shape (core::save_choices).
+    m_choices_file = (std::filesystem::path(Glib::get_user_data_dir()) / "netscope" / "choices.json").string();
+    const int restored = core::load_choices(m_choices_file, m_choices);
+    if (auto lg = log::get(log::Area::Devices))
+        lg->info("choices: {} restored from {}", restored, m_choices_file);
+    m_choices.set_on_change([this] {
+        if (!core::save_choices(m_choices_file, m_choices))
+            if (auto lg = log::get(log::Area::Devices)) lg->warn("choices: save failed: {}", m_choices_file);
+        queue_devices_repaint();
+    });
+    m_net.set_on_change([this] { queue_devices_repaint(); });
     m_journal.set_selection_source([this] {
         return m_sel.empty() ? std::vector<std::string>{} : std::vector<std::string>{m_sel};
     });
     m_journal.set_on_change([this] { update_undo_ui(); });
-    {
-        core::Stones::Loading load(m_stones);   // fixture data: not a user choice
-        for (const char* n : {"Ruby", "Jade", "Onyx", "Opal"}) {
-            const auto id = m_stones.fresh_id();
-            m_stones.put(id, core::Stone{n, 3, m_stones.pos_after({})});
-        }
-    }
+
+    // The feed seam: the source's thread pushes and emits; the dispatcher
+    // brings that to the main loop, which drains. Wired before the source starts.
+    m_feed_ready.connect(sigc::mem_fun(*this, &Shell::drain_feed));
+    m_inbox.set_notify([this] { m_feed_ready.emit(); });
 
     // ── Ctrl+Z from ANYWHERE but a text box ─────────────────────────────────
     // NOT an accelerator: a set_accels_for_action chord fires before the

@@ -8,7 +8,7 @@
 namespace netscope::log {
 
 namespace {
-constexpr int kAreaCount = 5;
+constexpr int kAreaCount = 6;
 
 const char* area_name(Area a) {
     switch (a) {
@@ -17,6 +17,7 @@ const char* area_name(Area a) {
         case Area::Registry: return "registry";
         case Area::Recents:  return "recents";
         case Area::Io:       return "io";
+        case Area::Devices:  return "devices";
     }
     return "?";
 }

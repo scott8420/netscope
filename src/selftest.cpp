@@ -5,12 +5,17 @@
 // runs the GTK-free core with no display, so a future you can trust the pump and
 // the mapping before wiring any widget on top:
 //   * Recents  -- move-to-front + trim + the JSON round-trip with stale-prune;
+//   * Devices  -- the fixture through the real feed seam (thread -> inbox ->
+//                 network), the row join and its order, and every device verb
+//                 through the one door (s002);
 //   * TextMap  -- forward(selection) -> inverse(map_range) round-trips byte-exact
 //                 across single-line / multi-line / cross-paragraph / UTF-8, and
 //                 chrome lines are never landed on.
 //
 //   cmake --build build --target netscope_selftest && ./build/netscope_selftest
 
+#include "core/Devices.hpp"
+#include "core/Feed.hpp"
 #include "core/Recents.hpp"
 #include "core/Shortcuts.hpp"
 #include "core/Stones.hpp"
@@ -19,6 +24,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -264,6 +271,166 @@ int main() {
             f.j.redo();
             f.j.clear();
             check("on_change: step, undo, redo, clear -- four", heard == 4, std::to_string(heard));
+        }
+    }
+
+
+    // ── Devices -- the feed seam, the join, the verbs (s002) ─────────────────
+    {
+        std::cout << "\n-- devices --\n";
+        using namespace core;
+        const auto titles = [](const std::vector<Row>& rs) {
+            std::string o;
+            for (const auto& r : rs) o += r.title + (r.presence == Presence::Stale ? "(stale)" : "") + ",";
+            return o;
+        };
+
+        // The fixture, through the real seam: a Source thread pushes, the
+        // inbox notifies, this thread drains and applies.
+        struct Fix {
+            Network       n;
+            Choices       c;
+            DeviceJournal j{c};
+            int           notified = 0;
+            Fix() {
+                c.set_door([this] { return j.open(); });
+                Inbox inbox;
+                inbox.set_notify([this] { ++notified; });
+                FixtureSource src{std::chrono::milliseconds(0)};
+                src.start(inbox);
+                src.finish();                     // joins: every event is queued
+                core::apply(n, inbox.drain());
+            }
+        };
+
+        {
+            Fix f;
+            check("feed: four events, four notifies", f.notified == 4, std::to_string(f.notified));
+            check("feed: three devices", f.n.count() == 3, std::to_string(f.n.count()));
+            const auto tc01 = f.n.get("tc01.local");
+            check("feed: tc01 online at its self-assigned address",
+                  tc01 && tc01->presence == Presence::Online &&
+                  tc01->sighting.addresses == std::vector<std::string>{"169.254.192.51"});
+            check("feed: tc02 announced, then stale", f.n.get("tc02.local")->presence == Presence::Stale);
+            const auto rs = rows(f.n, f.c, false);
+            check("rows: online by name, stale last", titles(rs) == "RASPI,tc01,tc02(stale),", titles(rs));
+            check("rows: services read as kinds", rs.size() == 3 && rs[0].services == "SMB, SSH" && rs[1].services == "AFP");
+            check("rows: no invented facts", rs.size() == 3 && rs[0].address.empty() && rs[0].model.empty());
+        }
+
+        {   // The feed is not a user choice: re-announcing is quiet, and
+            // returning revives a stale device.
+            Fix f;
+            int changes = 0;
+            f.n.set_on_change([&] { ++changes; });
+            const auto s = f.n.get("tc01.local")->sighting;
+            check("feed: a repeat announcement changes nothing", core::apply(f.n, std::vector<FeedEvent>{FeedEvent{FeedEvent::Kind::Seen, s}}) == 0 && changes == 0);
+            const auto s2 = fixture_sightings()[2];
+            check("feed: a stale device that returns is online", core::apply(f.n, std::vector<FeedEvent>{FeedEvent{FeedEvent::Kind::Seen, s2}}) == 1 &&
+                  f.n.get("tc02.local")->presence == Presence::Online);
+            check("feed: losing an unknown device is a no-op", !f.n.lost("nope.local"));
+            check("feed: no journal steps", f.j.size() == 0);
+        }
+
+        // The gate: every verb in the table, through the one door, undo/redo exact.
+        using Snap = std::vector<std::pair<std::string, Choice>>;
+        const auto snap = [](const Network& n, const Choices& c) {
+            Snap o;
+            for (const auto& id : n.ids()) o.emplace_back(id, c.of(id));
+            return o;
+        };
+        for (const auto& v : devices::verbs()) {
+            Fix f;
+            const auto before = snap(f.n, f.c);
+            v.run(f.j, f.c, f.n, "tc01.local");
+            const auto after = snap(f.n, f.c);
+            check("gate/device " + v.name + ": through the one door", f.c.strays() == 0);
+            check("gate/device " + v.name + ": is a step", f.j.size() == 1 && !(after == before));
+            f.j.undo();
+            check("gate/device " + v.name + ": undo puts it back exactly", snap(f.n, f.c) == before);
+            f.j.redo();
+            check("gate/device " + v.name + ": redo reproduces it", snap(f.n, f.c) == after);
+        }
+        {
+            Fix f;
+            f.c.put("tc01.local", Choice{"sneaky"});
+            check("gate/device: a write around the door is a stray", f.c.strays() == 1);
+        }
+
+        {   // Rename: the label, the row, clearing, no-ops.
+            Fix f;
+            devices::rename(f.j, f.c, f.n, "tc01.local", "  Basement  ");
+            check("rename: trimmed, and the row shows it", f.c.of("tc01.local").nickname == "Basement" &&
+                  titles(rows(f.n, f.c, false)) == "Basement,RASPI,tc02(stale),", titles(rows(f.n, f.c, false)));
+            check("rename: the label names the device", f.j.undo_label() == "Rename “tc01”", f.j.undo_label());
+            devices::rename(f.j, f.c, f.n, "tc01.local", "   ");
+            check("rename: blank clears it, named as shown", f.c.of("tc01.local").nickname.empty() &&
+                  f.j.undo_label() == "Clear nickname of “Basement”", f.j.undo_label());
+            check("rename: no choices left, no record kept", f.c.count() == 0);
+            const auto n = f.j.size();
+            devices::rename(f.j, f.c, f.n, "tc01.local", "");
+            devices::rename(f.j, f.c, f.n, "nope.local", "X");
+            devices::set_favourite(f.j, f.c, f.n, "tc01.local", false);
+            check("no-op: nothing kept", f.j.size() == n);
+        }
+
+        {   // Undo touches choices only: an address the feed delivered after
+            // the rename survives undoing the rename.
+            Fix f;
+            devices::rename(f.j, f.c, f.n, "tc01.local", "Basement");
+            auto s = f.n.get("tc01.local")->sighting;
+            s.addresses = {"192.168.1.20"};
+            core::apply(f.n, std::vector<FeedEvent>{FeedEvent{FeedEvent::Kind::Seen, s}});
+            f.j.undo();
+            check("seam: undo restores the nickname, keeps the new address",
+                  f.c.of("tc01.local").nickname.empty() &&
+                  f.n.get("tc01.local")->sighting.addresses.front() == "192.168.1.20");
+        }
+
+        {   // Favourite and hide shape the list.
+            Fix f;
+            devices::set_favourite(f.j, f.c, f.n, "tc02.local", true);
+            check("favourite: to the top, even stale",
+                  titles(rows(f.n, f.c, false)) == "tc02(stale),RASPI,tc01,", titles(rows(f.n, f.c, false)));
+            devices::set_hidden(f.j, f.c, f.n, "raspi.local", true);
+            check("hide: off the list", titles(rows(f.n, f.c, false)) == "tc02(stale),tc01,", titles(rows(f.n, f.c, false)));
+            const auto all = rows(f.n, f.c, true);
+            check("hide: back under Show hidden, marked", all.size() == 3 &&
+                  std::any_of(all.begin(), all.end(), [](const Row& r) { return r.hidden && r.id == "raspi.local"; }));
+            check("hide: the label", f.j.undo_label() == "Hide “RASPI”", f.j.undo_label());
+            f.j.undo();
+            f.j.undo();
+            check("favourite + hide: two undos, the list as it came",
+                  titles(rows(f.n, f.c, false)) == "RASPI,tc01,tc02(stale)," && f.c.count() == 0);
+            check("devices: no stray writes", f.c.strays() == 0);
+        }
+
+        {   // The choices pump: save -> load round-trips, defaults omitted,
+            // a load is not a step and not a stray.
+            namespace fs = std::filesystem;
+            const auto dir  = fs::temp_directory_path() / "netscope_selftest_choices";
+            fs::remove_all(dir);
+            const auto file = (dir / "choices.json").string();
+            Fix f;
+            devices::rename(f.j, f.c, f.n, "tc01.local", "Basement \u201cTC\u201d");
+            devices::set_favourite(f.j, f.c, f.n, "tc02.local", true);
+            devices::set_hidden(f.j, f.c, f.n, "raspi.local", true);
+            check("choices: saved", save_choices(file, f.c));
+            Choices back;
+            back.set_door([] { return false; });   // door shut: only Loading may write
+            check("choices: three loaded", load_choices(file, back) == 3);
+            check("choices: round-trip exact", back.all() == f.c.all());
+            check("choices: a load is not a stray", back.strays() == 0);
+            std::ifstream in(file);
+            const std::string text((std::istreambuf_iterator<char>(in)), {});
+            check("choices: defaults omitted", text.find("\"hidden\": false") == std::string::npos &&
+                  text.find("\"nickname\": \"\"") == std::string::npos);
+            Choices none;
+            check("choices: first run loads nothing", load_choices((dir / "absent.json").string(), none) == 0);
+            { std::ofstream bad(dir / "bad.json"); bad << "{ not json"; }
+            check("choices: garbage loads nothing, no throw", load_choices((dir / "bad.json").string(), none) == 0 && none.count() == 0);
+            check("choices: no temp file left", !fs::exists(file + ".tmp"));
+            fs::remove_all(dir);
         }
     }
 

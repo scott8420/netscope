@@ -9,7 +9,9 @@ if [[ ! -f build/CMakeCache.txt ]] && command -v ninja >/dev/null; then
     GEN=(-G Ninja)
 fi
 cmake -B build "${GEN[@]}"
-cmake --build build --target netscope netscope_selftest -- -j"$(nproc)"
+cmake --build build --target netscope netscope_selftest netdiscover_selftest netdiscover_probe netdiag_selftest -- -j"$(nproc)"
 echo ""
-echo "Built: ./build/netscope  and  ./build/netscope_selftest"
-echo "Smoke: ./build/netscope_selftest"
+echo "Built: ./build/netscope, ./build/netscope_selftest, ./build/netdiscover_selftest, ./build/netdiscover_probe, ./build/netdiag_selftest"
+echo "Smoke: ./build/netscope_selftest && ./build/netdiscover_selftest && ./build/netdiag_selftest"
+echo "Network check, no window: ./build/netdiscover_probe 8"
+echo "Canned devices instead of Avahi: NETSCOPE_FIXTURE=1 ./build/netscope"

@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 namespace netscope::log {
 
-enum class Area { App, Shell, Registry, Recents, Io };
+enum class Area { App, Shell, Registry, Recents, Io, Devices };
 
 // The logger for an area (may be null before init()/after shutdown -- callers
 // guard with `if (auto lg = log::get(area))`).

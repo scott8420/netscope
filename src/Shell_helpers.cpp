@@ -3,12 +3,15 @@
 #include "Log.hpp"
 
 #include <gtkmm/label.h>
+#include <gtkmm/box.h>
+#include <gtkmm/listboxrow.h>
 #include <gtkmm/editable.h>
 #include <gtkmm/textview.h>
 #include <glibmm/main.h>
 #include <giomm/menuitem.h>
 #include <glibmm/miscutils.h>
 #include <glibmm/variant.h>
+#include <glibmm/markup.h>
 
 #include <filesystem>
 
@@ -88,64 +91,150 @@ void Shell::rebuild_recents_page() {  // helper: repaint the live list page
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// s046 -- the undo stone's helpers.
+// s002 -- the Devices page's helpers.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// One repaint per idle, AFTER the writes that caused it. A verb can write
-// several records (a move writes two); repainting per write would rebuild the
-// list mid-verb, and a row rebuilt under a live click or a focused row is torn
-// down (jot s045: "open UI after the rebuild you caused").
-void Shell::queue_stones_repaint() {  // helper
+// The main-thread half of the feed seam. The source's thread pushed into the
+// inbox and emitted the dispatcher; here, on the main loop, take everything
+// queued and apply it. The network's on_change queues the one repaint.
+void Shell::drain_feed() {  // helper
+    const auto events = m_inbox.drain();
+    const int changed = core::apply(m_net, events);
+    for (const auto& e : events) {
+        auto lg = log::get(log::Area::Devices);
+        if (e.kind == core::FeedEvent::Kind::Note) {
+            m_feed_note = e.note;
+            if (lg) lg->info("note: {}", e.note);
+            queue_devices_repaint();
+        } else if (lg) {
+            lg->info("{} {}", e.kind == core::FeedEvent::Kind::Seen ? "seen" : "lost", e.sighting.id);
+        }
+    }
+    if (changed > 0 && m_sel.empty()) {
+        // First arrival: select the top row so the keyboard has somewhere to be.
+        const auto rs = core::rows(m_net, m_choices, m_show_hidden);
+        if (!rs.empty()) select_device(rs.front().id, false);
+    }
+}
+
+// One repaint per idle, AFTER the writes that caused it. A burst of feed
+// events, or a verb, would otherwise rebuild the list per write -- and a row
+// rebuilt under a live click or a focused row is torn down (jot s045).
+void Shell::queue_devices_repaint() {  // helper
     if (m_repaint_queued) return;
     m_repaint_queued = true;
     Glib::signal_idle().connect_once([this]() {
         m_repaint_queued = false;
-        repaint_stones();
+        repaint_devices();
     });
 }
 
-// The list and the detail fields, from the model. Setting a field here is not a
-// user choice: m_painting keeps the field's own signal from writing it back.
-void Shell::repaint_stones() {  // helper
-    m_painting = true;
-    while (auto* c = m_stone_list.get_first_child()) m_stone_list.remove(*c);
-    Gtk::ListBoxRow* chosen = nullptr;
-    for (const auto& id : m_stones.ids()) {
-        const auto v = m_stones.get(id);
-        auto row = Gtk::make_managed<Gtk::ListBoxRow>();
-        row->set_name(id);   // the row carries its stone's id
-        auto label = Gtk::make_managed<Gtk::Label>(
-            v->name + "   ·   size " + std::to_string(v->size));
-        label->set_xalign(0.0f);
-        label->set_margin(6);
-        row->set_child(*label);
-        m_stone_list.append(*row);
-        if (id == m_sel) chosen = row;
-    }
-    if (chosen) m_stone_list.select_row(*chosen);
-    else        m_stone_list.unselect_all();
+namespace {
+std::string esc(const std::string& s) { return Glib::Markup::escape_text(s); }
 
-    const auto v = m_sel.empty() ? std::nullopt : m_stones.get(m_sel);
-    m_stone_name.set_sensitive(v.has_value());
-    m_stone_size.set_sensitive(v.has_value());
+std::string join(const std::vector<std::string>& v, const char* sep) {
+    std::string o;
+    for (const auto& x : v) { if (!o.empty()) o += sep; o += x; }
+    return o;
+}
+}  // namespace
+
+// The list and the detail fields, from the model. Setting a field here is not
+// a user choice: m_painting keeps the field's own signal from writing it back.
+void Shell::repaint_devices() {  // helper
+    m_painting = true;
+    while (auto* c = m_device_list.get_first_child()) m_device_list.remove(*c);
+    Gtk::ListBoxRow* chosen = nullptr;
+    for (const auto& r : core::rows(m_net, m_choices, m_show_hidden)) {
+        auto row = Gtk::make_managed<Gtk::ListBoxRow>();
+        row->set_name(r.id);   // the row carries its device's id
+        auto box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 10);
+        box->set_margin(6);
+
+        auto star = Gtk::make_managed<Gtk::Label>(r.favourite ? "\u2605" : "");
+        star->set_size_request(16, -1);
+        box->append(*star);
+
+        auto text = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 2);
+        text->set_hexpand(true);
+        auto title = Gtk::make_managed<Gtk::Label>();
+        title->set_xalign(0.0f);
+        title->set_markup("<b>" + esc(r.title) + "</b>" + (r.hidden ? "  <i>(hidden)</i>" : ""));
+        text->append(*title);
+        std::vector<std::string> sub;
+        if (r.title != r.advertised) sub.push_back(r.advertised);
+        if (!r.model.empty())        sub.push_back(r.model);
+        if (!r.services.empty())     sub.push_back(r.services);
+        auto subtitle = Gtk::make_managed<Gtk::Label>(join(sub, "  \u00b7  "));
+        subtitle->set_xalign(0.0f);
+        subtitle->add_css_class("dim-label");
+        text->append(*subtitle);
+        box->append(*text);
+
+        auto addr = Gtk::make_managed<Gtk::Label>(r.address.empty() ? "no address" : r.address);
+        addr->add_css_class("dim-label");
+        box->append(*addr);
+        auto pres = Gtk::make_managed<Gtk::Label>(r.presence == core::Presence::Online ? "online" : "stale");
+        pres->set_size_request(56, -1);
+        pres->set_xalign(1.0f);
+        if (r.presence == core::Presence::Stale) pres->add_css_class("dim-label");
+        box->append(*pres);
+
+        if (r.presence == core::Presence::Stale || r.hidden) box->set_opacity(0.6);
+        row->set_child(*box);
+        m_device_list.append(*row);
+        if (r.id == m_sel) chosen = row;
+    }
+    if (chosen) m_device_list.select_row(*chosen);
+    else        m_device_list.unselect_all();
+
+    // The detail: everything the network said about the selected device.
+    const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
+    const auto c    = m_choices.of(m_sel);
+    m_device_name.set_sensitive(seen.has_value());
+    m_fav_button.set_sensitive(seen.has_value());
+    m_hide_button.set_sensitive(seen.has_value());
+    m_diag_button.set_sensitive(seen.has_value() && !m_diag_thread.joinable());
+    if (m_sel != m_diag_for && !m_diag_thread.joinable()) m_diag_said.set_text("");   // findings belong to one device
+    m_fav_button.set_label(c.favourite ? "Unfavourite" : "Favourite");
+    m_hide_button.set_label(c.hidden ? "Show" : "Hide");
+    if (seen) {
+        const auto& s = seen->sighting;
+        std::vector<std::string> svcs;
+        for (const auto& v : s.services) {
+            const auto l = core::service_label(v.kind);
+            if (!l.empty()) svcs.push_back(l + " " + std::to_string(v.port));
+        }
+        m_device_facts.set_markup(
+            "<b>" + esc(s.name) + "</b>  <tt>" + esc(s.id) + "</tt>  \u00b7  " +
+            (seen->presence == core::Presence::Online ? "online" : "stale") + "\n" +
+            "Model: "     + esc(s.model.empty() ? "unknown" : s.model) + "\n" +
+            "Addresses: " + esc(s.addresses.empty() ? "none reported" : join(s.addresses, ", ")) + "\n" +
+            "Services: "  + esc(svcs.empty() ? "none" : join(svcs, ", ")));
+    } else {
+        // Nothing selected: say what the feed last said, so an empty list explains itself.
+        const std::string looking = m_feed_note.empty() ? "Looking for devices\u2026" : m_feed_note;
+        m_device_facts.set_text(m_net.count() == 0 ? looking : "Nothing selected.  " + m_feed_note);
+    }
     // Never overwrite a field the user is typing in.
-    if (!m_stone_name.has_focus() || !v) m_stone_name.set_text(v ? v->name : std::string{});
-    if (!m_journal.in_gesture()) m_stone_size.set_value(v ? v->size : 1);
+    if (!m_device_name.has_focus() || !seen) m_device_name.set_text(c.nickname);
+    m_device_name.set_placeholder_text(seen ? seen->sighting.name : std::string{});
+    m_show_hidden_check.set_active(m_show_hidden);
     m_painting = false;
 
     if (m_keys_to_list) {
         m_keys_to_list = false;
         if (chosen) chosen->grab_focus();
-        else        m_stone_list.grab_focus();
+        else        m_device_list.grab_focus();
     }
 }
 
-// Select a stone (and, with `keys`, give its row the keyboard) once the
+// Select a device (and, with `keys`, give its row the keyboard) once the
 // repaint the last write queued has run.
-void Shell::select_stone(const std::string& id, bool keys) {  // helper
+void Shell::select_device(const std::string& id, bool keys) {  // helper
     m_sel = id;
     m_keys_to_list = m_keys_to_list || keys;
-    queue_stones_repaint();
+    queue_devices_repaint();
 }
 
 // Undo / Redo say what they would do, and grey when there is nothing: the

@@ -22,6 +22,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
 find_package(spdlog REQUIRED)
+find_package(Threads REQUIRED)
 
 # ── netscope_core -- the GTK-free core (the model side of the one real seam) ──────
 # No gtkmm on this library's link line, BY DESIGN: a stray UI include under
@@ -35,18 +36,26 @@ add_library(netscope_core STATIC
     # can't drift. GTK-free, so it lives in core and the selftest guards it
     # headless -- a pure test proves no two chords collide.
     src/core/Shortcuts.cpp
-    # The UNDO paradigm (s046): core/Undo.hpp is the journal (header-only, a
-    # template over the app's store); Stones is the demo model + its verbs +
-    # the verb table the selftest gate walks. docs/undo.md.
-    src/core/Stones.cpp
+    # s002 -- the device model: Network (what discovery says) + Choices (what
+    # Scott chose, through the undo journal, core/Undo.hpp). The feed seam:
+    # a Source thread pushes into an Inbox the UI drains. docs/undo.md.
+    src/core/Devices.cpp
+    src/core/Feed.cpp
 )
 target_include_directories(netscope_core PUBLIC include)
+target_link_libraries(netscope_core PUBLIC Threads::Threads)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail
 # of the pump, no consumer inherits the include (CANON: surprise-free build).
 target_include_directories(netscope_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
+# ── libs/ -- each library arrives with the milestone that needs it ──────────────
+add_subdirectory(libs/netdiscover)   # milestone 4: Avahi
+add_subdirectory(libs/netdiag)       # milestone 5: address, route, port
+
 # ── Headless selftest -- exercises the core with no display ────────────────────
-add_executable(netscope_selftest src/selftest.cpp)
+# Stones (Cairn's demo model) left the app in s002; it stays here as the
+# journal's own test fixture -- merges and gestures, which devices don't use yet.
+add_executable(netscope_selftest src/selftest.cpp src/core/Stones.cpp)
 target_link_libraries(netscope_selftest PRIVATE netscope_core)
 
 # ── App resources (gresource) -- the RESOURCE-PIPELINE paradigm ────────────────
@@ -96,6 +105,6 @@ add_executable(netscope
     src/Log.cpp
 )
 target_include_directories(netscope PRIVATE include ${GTKMM_INCLUDE_DIRS})
-target_link_libraries(netscope     PRIVATE ${GTKMM_LIBRARIES} netscope_core spdlog::spdlog)
+target_link_libraries(netscope     PRIVATE ${GTKMM_LIBRARIES} netscope_core netdiscover netdiag spdlog::spdlog)
 target_link_directories(netscope   PRIVATE ${GTKMM_LIBRARY_DIRS})
 target_compile_options(netscope    PRIVATE ${GTKMM_CFLAGS_OTHER})

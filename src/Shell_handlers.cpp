@@ -10,6 +10,7 @@
 #include <giomm/file.h>
 
 #include <filesystem>
+#include <glibmm/markup.h>
 
 // Shell_handlers.cpp -- HANDLERS. Slot bodies: what a user action actually does.
 // Each is small and single-concern; orchestration it shares lives in helpers.
@@ -79,17 +80,17 @@ void Shell::on_about() {  // handler: open the About window (dialog-lifetime exe
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// s046 -- the undo stone's handlers. Each verb is ONE call into core::stones
-// (which goes through the journal) and then says where the selection goes.
-// None of them writes m_stones directly: the selftest's gate would not see a
-// handler that did, so the rule is kept here by hand -- handlers call verbs.
+// s002 -- the Devices page's handlers. Each choice is ONE call into
+// core::devices (which goes through the journal). None of them writes
+// m_choices directly: the selftest's gate would not see a handler that did,
+// so the rule is kept here by hand -- handlers call verbs.
 // ─────────────────────────────────────────────────────────────────────────────
 void Shell::on_undo() {  // handler: take the last step back
     const auto r = m_journal.undo();
     if (!r.done) return;
     m_sel = r.selection.empty() ? std::string{} : r.selection.front();
     m_undo_said.set_text("Undid: " + r.label);
-    select_stone(m_sel, true);
+    select_device(m_sel, true);
     if (auto lg = log::get(log::Area::Shell)) lg->info("undo: {}", r.label);
 }
 
@@ -98,49 +99,66 @@ void Shell::on_redo() {  // handler: put the undone step back
     if (!r.done) return;
     m_sel = r.selection.empty() ? std::string{} : r.selection.front();
     m_undo_said.set_text("Redid: " + r.label);
-    select_stone(m_sel, true);
+    select_device(m_sel, true);
     if (auto lg = log::get(log::Area::Shell)) lg->info("redo: {}", r.label);
 }
 
-void Shell::on_stone_add() {  // handler: a new stone just below the selection
-    const auto id = core::stones::add(m_journal, m_stones, "Stone", m_sel);
-    m_journal.reselect({id});
-    m_sel = id;
-    select_stone(id, false);
-    m_stone_name.grab_focus();   // name it next -- the field keeps its own Ctrl+Z
-}
-
-void Shell::on_stone_delete() {  // handler: delete; the neighbour takes the selection
+void Shell::on_device_favourite() {  // handler: star / unstar
     if (m_sel.empty()) return;
-    const auto next = core::stones::neighbour(m_stones, m_sel);
-    if (!core::stones::remove(m_journal, m_stones, m_sel)) return;
-    m_sel = next;
-    m_journal.reselect(next.empty() ? std::vector<std::string>{} : std::vector<std::string>{next});
-    select_stone(next, true);   // the KEYBOARD goes with it: the next Ctrl+Z lands
+    const bool on = !m_choices.of(m_sel).favourite;
+    if (core::devices::set_favourite(m_journal, m_choices, m_net, m_sel, on)) select_device(m_sel, true);
 }
 
-void Shell::on_stone_up() {  // handler
-    if (!m_sel.empty() && core::stones::move_up(m_journal, m_stones, m_sel)) select_stone(m_sel, true);
+void Shell::on_device_hide() {  // handler: hide / show
+    if (m_sel.empty()) return;
+    const bool on = !m_choices.of(m_sel).hidden;
+    // Hiding takes the row off the list (unless Show hidden): the selection
+    // stays on it, so Ctrl+Z right away brings it back where it was.
+    if (core::devices::set_hidden(m_journal, m_choices, m_net, m_sel, on)) select_device(m_sel, true);
 }
 
-void Shell::on_stone_down() {  // handler
-    if (!m_sel.empty() && core::stones::move_down(m_journal, m_stones, m_sel)) select_stone(m_sel, true);
-}
-
-void Shell::on_stone_rename() {  // handler: Enter in the name field, or leaving it
+void Shell::on_device_rename() {  // handler: Enter in the nickname field, or leaving it
     if (m_painting || m_sel.empty()) return;
-    const auto v = m_stones.get(m_sel);
-    const std::string name = m_stone_name.get_text();
-    if (v && v->name != name) core::stones::rename(m_journal, m_stones, m_sel, name);
+    core::devices::rename(m_journal, m_choices, m_net, m_sel, m_device_name.get_text());
 }
 
-void Shell::on_stone_size() {  // handler: the slider moved
-    if (m_painting || m_sel.empty()) return;
-    const int n = static_cast<int>(m_stone_size.get_value() + 0.5);
-    // Mid-drag the gesture is open and this is just a write inside it; by
-    // keys or the wheel it is a step that merges with the presses before it.
-    if (m_journal.in_gesture()) core::stones::drag_to(m_journal, m_stones, m_sel, n);
-    else                        core::stones::resize(m_journal, m_stones, m_sel, n);
+void Shell::on_device_diagnose() {  // handler: the checks, off the main thread
+    if (m_sel.empty() || m_diag_thread.joinable()) return;
+    const auto seen = m_net.get(m_sel);
+    if (!seen) return;
+    const core::Sighting s = seen->sighting;
+    m_diag_for  = s.id;
+    m_diag_name = s.name.empty() ? s.id : s.name;
+    m_diag_button.set_sensitive(false);
+    m_diag_said.set_text("Checking " + m_diag_name + "\u2026");
+    if (auto lg = log::get(log::Area::Devices)) lg->info("diagnose {}", s.id);
+    m_diag_thread = std::jthread([this, s] {
+        auto found = netdiag::diagnose(s, netdiag::local_facts());
+        { std::lock_guard l(m_diag_mu); m_diag_findings = std::move(found); }
+        m_diag_ready.emit();
+    });
+}
+
+void Shell::on_diagnose_done() {  // handler: main thread -- the findings
+    if (m_diag_thread.joinable()) m_diag_thread.join();   // it has finished: it just emitted
+    std::vector<netdiag::Finding> found;
+    { std::lock_guard l(m_diag_mu); found.swap(m_diag_findings); }
+    std::string text = "<b>" + Glib::Markup::escape_text(m_diag_name) + "</b>";
+    for (const auto& f : found) {
+        const char* mark = f.verdict == netdiag::Verdict::Ok   ? "\u2713" :
+                           f.verdict == netdiag::Verdict::Warn ? "!" :
+                           f.verdict == netdiag::Verdict::Fail ? "\u2717" : "\u2013";
+        text += std::string("\n") + mark + "  " + Glib::Markup::escape_text(f.says);
+        if (auto lg = log::get(log::Area::Devices)) lg->info("  {}: {}", f.check, f.says);
+    }
+    m_diag_said.set_markup(text);
+    m_diag_button.set_sensitive(!m_sel.empty());
+}
+
+void Shell::on_show_hidden() {  // handler: a view setting -- not a step
+    if (m_painting) return;
+    m_show_hidden = m_show_hidden_check.get_active();
+    queue_devices_repaint();
 }
 
 }  // namespace netscope
