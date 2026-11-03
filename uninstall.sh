@@ -25,6 +25,9 @@ if [[ ! -f "$MANIFEST" ]]; then
 else
     SUDO=()
     [[ -w "$MANIFEST" ]] || SUDO=(sudo)
+    if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+        systemctl --user disable --now netscoped.service >/dev/null 2>&1 || true
+    fi
     while IFS= read -r p; do
         [[ -z "$p" ]] && continue
         real="$(realpath -m "$p")"
@@ -37,6 +40,7 @@ else
     ICONS="$PREFIX/share/icons/hicolor"
     command -v gtk-update-icon-cache   >/dev/null && [[ -d "$ICONS" ]] && "${SUDO[@]}" gtk-update-icon-cache -q -t -f "$ICONS" || true
     command -v update-desktop-database >/dev/null && "${SUDO[@]}" update-desktop-database -q "$PREFIX/share/applications" || true
+    command -v systemctl >/dev/null && systemctl --user daemon-reload >/dev/null 2>&1 || true
     echo "Removed NetScope from $PREFIX"
 fi
 

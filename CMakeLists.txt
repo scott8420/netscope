@@ -53,6 +53,11 @@ add_subdirectory(libs/netdiscover)   # milestone 4: Avahi
 add_subdirectory(libs/netdiag)       # milestone 5: address, route, port
 add_subdirectory(libs/netmount)      # milestone 6: GIO shares and mounts
 
+# ── netscoped -- the session daemon the Quick Settings tile talks to (m8) ──
+# No GTK: core (choices.json) + libnetmount, on the session bus.
+add_executable(netscoped daemon/netscoped.cpp)
+target_link_libraries(netscoped PRIVATE netscope_core netmount)
+
 # ── Headless selftest -- exercises the core with no display ────────────────────
 # Stones (Cairn's demo model) left the app in s002; it stays here as the
 # journal's own test fixture -- merges and gestures, which devices don't use yet.

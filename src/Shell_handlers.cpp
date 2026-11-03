@@ -234,6 +234,12 @@ void Shell::on_share_unmount(const std::string& uri) {  // handler: unmount it
     });
 }
 
+void Shell::mount_share(const std::string& uri) {  // handler: app.mount from the tile
+    for (const auto& [id, c] : m_choices.all())
+        if (core::devices::is_pinned(m_choices, id, uri) && m_net.get(id)) { m_sel = id; select_device(id, false); break; }
+    on_share_mount(uri);
+}
+
 void Shell::on_share_pin(const netmount::Share& share, bool on) {  // handler: pin / unpin -- a choice, an undo step
     if (m_sel.empty()) return;
     core::devices::set_pinned(m_journal, m_choices, m_net, m_sel, core::Pin{share.name, share.uri}, on);

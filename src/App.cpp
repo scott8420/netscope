@@ -39,6 +39,16 @@ void App::on_startup() {
         std::vector<Glib::ustring> accels(s.accels.begin(), s.accels.end());
         set_accels_for_action(s.action, accels);
     }
+    add_action_with_parameter("mount", Glib::VARIANT_TYPE_STRING,
+                              sigc::mem_fun(*this, &App::on_mount_action));
+    add_action("devices", [this] { activate(); });
+}
+
+void App::on_mount_action(const Glib::VariantBase& v) {  // the tile: "this share needs a password"
+    const auto uri = Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::ustring>>(v).get();
+    activate();   // the window, built if this is a D-Bus activated start
+    if (auto lg = log::get(log::Area::App)) lg->info("mount action: {}", uri.raw());
+    if (m_shell) m_shell->mount_share(uri);
 }
 
 void App::on_activate() {
@@ -65,6 +75,7 @@ void App::on_activate() {
         icons->add_resource_path("/io/github/scott8420/NetScope/icons");
     }
 
+    if (m_shell) { m_shell->present(); return; }   // a second activation (the tile) raises it
     m_shell = new Shell();       // lifetime owned by the application
     add_window(*m_shell);
     m_shell->build_ui();

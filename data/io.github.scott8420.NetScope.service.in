@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=io.github.scott8420.NetScope
+Exec=@BINDIR@/netscope --gapplication-service

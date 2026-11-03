@@ -8,3 +8,4 @@ Terminal=false
 Categories=Network;Utility;GTK;
 Keywords=network;bonjour;afp;smb;time capsule;mount;share;
 StartupNotify=true
+DBusActivatable=true

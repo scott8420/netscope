@@ -1,0 +1,12 @@
+[Unit]
+Description=NetScope daemon (pinned shares for the Quick Settings tile)
+After=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=io.github.scott8420.NetScope.Daemon
+ExecStart=@BINDIR@/netscoped
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

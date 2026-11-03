@@ -66,6 +66,10 @@ public:
     ~Shell() override;
 
     void build_ui();                             // category: glue
+    // Milestone 8: mount a share asked for from outside (the tile, via
+    // app.mount) -- selects its device when the network knows it, then the
+    // same Mount the row button does, password dialog and all.
+    void mount_share(const std::string& uri);    // category: handler
 
 private:
     // ── zones ──────────────────────────────────────────────────────────────

@@ -37,16 +37,25 @@ ICONS="$PREFIX/share/icons/hicolor"
 SHARE="$PREFIX/share/$APP"
 MANIFEST="$SHARE/install-manifest.txt"
 
-tmp="$(mktemp)"; desktop="$(mktemp)"
-trap 'rm -f "$tmp" "$desktop"' EXIT
-sed "s|@BINDIR@|$BIN|g" "data/$ID.desktop.in" > "$desktop"
+DBUS="$PREFIX/share/dbus-1/services"
+UNITS="$PREFIX/share/systemd/user"   # systemd's user search path covers ~/.local/share and /usr/local/share
+
+tmp="$(mktemp)"; gen="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$gen"' EXIT
+fill() { sed "s|@BINDIR@|$BIN|g" "data/$1.in" > "$gen/$1"; echo "$gen/$1"; }
 
 put() {  # mode source dest
     "${SUDO[@]}" install -D -m "$1" "$2" "$3"
     echo "$3" >> "$tmp"
 }
 put 755 "build/$APP"                                                "$BIN/$APP"
-put 644 "$desktop"                                                  "$APPS/$ID.desktop"
+put 755 "build/netscoped"                                           "$BIN/netscoped"
+put 644 "$(fill "$ID.desktop")"                                     "$APPS/$ID.desktop"
+# Milestone 8: the tile starts the app (D-Bus activation, app.mount) and the
+# daemon (D-Bus activation hands over to the systemd user unit).
+put 644 "$(fill "$ID.service")"                                     "$DBUS/$ID.service"
+put 644 "$(fill "$ID.Daemon.service")"                              "$DBUS/$ID.Daemon.service"
+put 644 "$(fill netscoped.service)"                                 "$UNITS/netscoped.service"
 put 644 "data/$ID.svg"                                              "$ICONS/scalable/apps/$ID.svg"
 put 644 "resources/icons/scalable/apps/$APP-logo-symbolic.svg"      "$ICONS/symbolic/apps/$ID-symbolic.svg"
 
@@ -56,4 +65,11 @@ echo "$MANIFEST" >> "$tmp"
 command -v gtk-update-icon-cache   >/dev/null && "${SUDO[@]}" gtk-update-icon-cache -q -t -f "$ICONS" || true
 command -v update-desktop-database >/dev/null && "${SUDO[@]}" update-desktop-database -q "$APPS" || true
 
+if [[ -z ${SUDO[*]:-} ]] && command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+    systemctl --user daemon-reload
+    systemctl --user enable netscoped.service >/dev/null 2>&1 || true
+    systemctl --user restart netscoped.service && echo "netscoped: running (systemctl --user status netscoped)"
+else
+    echo "netscoped: start it with  systemctl --user daemon-reload && systemctl --user enable --now netscoped"
+fi
 echo "Installed to $PREFIX"
