@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=NetScope
+Comment=Find, diagnose and connect to what is on your network
+Exec=@BINDIR@/netscope
+Icon=io.github.scott8420.NetScope
+Terminal=false
+Categories=Network;Utility;GTK;
+Keywords=network;bonjour;afp;smb;time capsule;mount;share;
+StartupNotify=true
