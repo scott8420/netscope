@@ -146,7 +146,10 @@ void Shell::on_diagnose_done() {  // handler: main thread -- the findings
     if (m_diag_thread.joinable()) m_diag_thread.join();   // it has finished: it just emitted
     std::vector<netdiag::Finding> found;
     { std::lock_guard l(m_diag_mu); found.swap(m_diag_findings); }
-    std::string text = "<b>" + Glib::Markup::escape_text(m_diag_name) + "</b>";
+    std::string text;
+    if (!m_fix_note.empty()) text = Glib::Markup::escape_text(m_fix_note) + "\n\n";   // milestone 9
+    m_fix_note.clear();
+    text += "<b>" + Glib::Markup::escape_text(m_diag_name) + "</b>";
     for (const auto& f : found) {
         const char* mark = f.verdict == netdiag::Verdict::Ok   ? "\u2713" :
                            f.verdict == netdiag::Verdict::Warn ? "!" :
@@ -156,6 +159,41 @@ void Shell::on_diagnose_done() {  // handler: main thread -- the findings
     }
     m_diag_said.set_markup(text);
     m_diag_button.set_sensitive(!m_sel.empty());
+    const bool offer = std::any_of(found.begin(), found.end(), [](const netdiag::Finding& f) { return f.fix == "link-local"; });
+    m_fix_button.set_visible(offer);
+    m_fix_button.set_sensitive(offer && !m_fix_thread.joinable());
+}
+
+// ── Milestone 9 -- the Fix button ──────────────────────────────────────────
+// NetScope runs as the user and can't add an address; NetworkManager can, and
+// lets the logged-in user change their own connection (polkit; GNOME prompts
+// if it wants a password). See libs/netfix.
+void Shell::on_device_fix() {  // handler: link-local via NM, off the main thread
+    if (m_fix_thread.joinable()) return;
+    m_fix_button.set_sensitive(false);
+    m_diag_said.set_text("Asking NetworkManager to turn on link-local\u2026");
+    if (auto lg = log::get(log::Area::Devices)) lg->info("fix: link-local on the primary connection");
+    m_fix_thread = std::jthread([this] {
+        auto r = netfix::set_link_local("", true);
+        { std::lock_guard l(m_fix_mu); m_fix_result = std::move(r); }
+        m_fix_ready.emit();
+    });
+}
+
+void Shell::on_fix_done() {  // handler: main thread -- say what NM did; re-diagnose on success
+    if (m_fix_thread.joinable()) m_fix_thread.join();   // it has finished: it just emitted
+    netfix::Result r;
+    { std::lock_guard l(m_fix_mu); r = std::move(m_fix_result); }
+    if (auto lg = log::get(log::Area::Devices))
+        lg->info("fix: {} ({}, {}, link-local {})", r.says, r.target.iface, r.target.conn_path, r.target.link_local);
+    if (!r.ok) {
+        m_diag_said.set_text(r.says);
+        m_fix_button.set_sensitive(true);
+        return;
+    }
+    m_fix_button.set_visible(false);
+    m_fix_note = r.says;
+    on_device_diagnose();                                   // the route line should now read "directly on <iface>"
 }
 
 void Shell::on_show_hidden() {  // handler: a view setting -- not a step

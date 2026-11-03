@@ -29,6 +29,7 @@ Shell::Shell()
       m_show_hidden_check("shell.devices.show_hidden"),
       m_diag_button("shell.devices.diagnose"),
       m_diag_said("shell.devices.diag_said"),
+      m_fix_button("shell.devices.fix"),
       m_shares_button("shell.devices.shares"),
       m_share_list("shell.devices.share_list"),
       m_share_said("shell.devices.share_said"),
@@ -42,6 +43,7 @@ Shell::~Shell() {
     // Join the feed's thread before anything it pushes to is torn down.
     if (m_source) m_source->stop();
     if (m_diag_thread.joinable()) m_diag_thread.join();   // bounded: a few seconds at most
+    if (m_fix_thread.joinable()) m_fix_thread.join();     // bounded by its D-Bus timeouts (a polkit prompt may be up)
 }
 
 // The ordered pass Scott's Controller/MainWindow shape names: construct the

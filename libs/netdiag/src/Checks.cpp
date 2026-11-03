@@ -136,7 +136,8 @@ Finding check_route(const core::Sighting& s, const Facts& f) {
     if (kind_of(a) == Kind::LinkLocal) {
         r.verdict = Verdict::Fail;
         r.says = "No route: this machine has no 169.254 address, so it can't reach " + who(s) +
-                 " even though it can see it. Adding one fixes that until the next reconnect.";
+                 " even though it can see it. Fix turns on link-local for this connection.";
+        r.fix = "link-local";
         return r;
     }
     if (f.default_route) {

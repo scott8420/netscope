@@ -52,6 +52,7 @@ target_include_directories(netscope_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/thi
 add_subdirectory(libs/netdiscover)   # milestone 4: Avahi
 add_subdirectory(libs/netdiag)       # milestone 5: address, route, port
 add_subdirectory(libs/netmount)      # milestone 6: GIO shares and mounts
+add_subdirectory(libs/netfix)        # milestone 9: link-local via NetworkManager
 
 # ── netscoped -- the session daemon the Quick Settings tile talks to (m8) ──
 # No GTK: core (choices.json) + libnetmount, on the session bus.
@@ -111,6 +112,6 @@ add_executable(netscope
     src/Log.cpp
 )
 target_include_directories(netscope PRIVATE include ${GTKMM_INCLUDE_DIRS})
-target_link_libraries(netscope     PRIVATE ${GTKMM_LIBRARIES} netscope_core netdiscover netdiag netmount spdlog::spdlog)
+target_link_libraries(netscope     PRIVATE ${GTKMM_LIBRARIES} netscope_core netdiscover netdiag netmount netfix spdlog::spdlog)
 target_link_directories(netscope   PRIVATE ${GTKMM_LIBRARY_DIRS})
 target_compile_options(netscope    PRIVATE ${GTKMM_CFLAGS_OTHER})

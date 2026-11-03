@@ -115,6 +115,13 @@ void Shell::build_devices_page() {  // zone: the Devices page
     m_diag_button.set_tooltip_text("Address, route and port checks for the selected device");
     m_diag_button.set_action_name("win.device-diagnose");
     verbs->append(m_diag_button);
+    m_fix_button.set_label("Fix");
+    m_fix_button.set_tooltip_text("Turn on link-local for this connection, so 169.254 devices are reachable "
+                                  "(asks NetworkManager; it stays on across reconnects)");
+    m_fix_button.set_action_name("win.device-fix");
+    m_fix_button.add_css_class("suggested-action");
+    m_fix_button.set_visible(false);
+    verbs->append(m_fix_button);
     m_show_hidden_check.set_label("Show hidden");
     m_show_hidden_check.signal_toggled().connect(sigc::mem_fun(*this, &Shell::on_show_hidden));
     verbs->append(m_show_hidden_check);

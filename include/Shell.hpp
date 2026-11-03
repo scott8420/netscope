@@ -5,6 +5,7 @@
 
 #include "netdiag/Checks.hpp"   // milestone 5: the checks
 #include "netmount/Mounter.hpp" // milestone 6: shares and mounts through GIO
+#include "netfix/LinkLocal.hpp"  // milestone 9: the Fix button (link-local via NetworkManager)
 
 #include <glibmm/dispatcher.h>
 #include <mutex>
@@ -97,6 +98,8 @@ private:
     void on_show_hidden();                       // category: handler: the "Show hidden" switch (a view, not a choice)
     void on_device_diagnose();                   // category: handler: run the checks off the main thread
     void on_diagnose_done();                     // category: handler: main thread -- show the findings
+    void on_device_fix();                        // category: handler: milestone 9 -- link-local via NM, off the main thread
+    void on_fix_done();                          // category: handler: main thread -- say what NM did, re-diagnose
     // Milestone 6 -- shares. Mounts are not choices: no journal, no undo step;
     // Unmount is the visible opposite (ARCHITECTURE).
     void on_device_shares();                     // category: handler: list the selected device's SMB shares
@@ -162,6 +165,7 @@ private:
     widgets::CheckButton m_show_hidden_check;
     widgets::Button      m_diag_button;
     widgets::Label       m_diag_said;          // the findings, one plain line each
+    widgets::Button      m_fix_button;         // milestone 9: "Fix" -- shown only when a finding offers one
     widgets::Button      m_shares_button;      // milestone 6: "Shares"
     widgets::ListBox     m_share_list;         // one row per share: name, state, Mount/Unmount, Open
     widgets::Label       m_share_said;         // what the last share action said
@@ -191,6 +195,15 @@ private:
     std::string                       m_diag_for;        // the device they're about
     std::string                       m_diag_name;
     std::jthread                      m_diag_thread;
+
+    // Fix (milestone 9): same shape as Diagnose. Not a choice and not an undo
+    // step -- it changes NetworkManager's connection, like a mount changes the
+    // system (ARCHITECTURE). The undo is `netfix_probe off` / nmcli.
+    Glib::Dispatcher                  m_fix_ready;
+    std::mutex                        m_fix_mu;
+    netfix::Result                    m_fix_result;      // guarded by m_fix_mu
+    std::jthread                      m_fix_thread;
+    std::string                       m_fix_note;        // what NM did, shown above the next findings
 
     // Shares (milestone 6). A view of what GIO said, per device; not the
     // model -- the feed doesn't know shares, and nothing here is a choice.

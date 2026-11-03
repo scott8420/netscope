@@ -45,6 +45,8 @@ int main() {
     f = nd::check_route(dev({"169.254.192.51"}), home);
     check("route: tc01's case -- no 169.254 here, Fail", f.verdict == V::Fail &&
           f.says.find("no 169.254 address") != std::string::npos, f.says);
+    check("route: tc01's case offers the link-local fix", f.fix == "link-local");
+    check("route: other failures offer no fix", nd::check_route(dev({"10.9.8.7"}), nd::Facts{home.ifaces, false}).fix.empty());
     nd::Facts fixed = home;
     fixed.ifaces.push_back({"wld0", "169.254.10.10", 16});
     f = nd::check_route(dev({"169.254.192.51"}), fixed);

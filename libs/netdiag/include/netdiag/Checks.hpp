@@ -24,6 +24,7 @@ struct Finding {
     std::string check;     // "address", "route", "port 548"
     Verdict     verdict = Verdict::Skip;
     std::string says;      // one plain sentence
+    std::string fix;       // a remedy the app can offer: "link-local" (milestone 9), else ""
     bool operator==(const Finding&) const = default;
 };
 
