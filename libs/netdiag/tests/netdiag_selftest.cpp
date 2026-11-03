@@ -25,7 +25,7 @@ core::Sighting dev(std::vector<std::string> addrs, std::vector<core::Service> sv
 }  // namespace
 
 int main() {
-    std::cout << "netdiag_selftest -- address, route, port\n";
+    std::cout << "netdiag_selftest -- address, route, port, smb\n";
     using V = nd::Verdict;
 
     check("kind: 169.254 is link-local", nd::kind_of("169.254.192.51") == nd::Kind::LinkLocal);
@@ -79,6 +79,39 @@ int main() {
           all[1].check == "route" && all[2].check == "port 548");
     all = nd::diagnose(dev({}, {{"smb", 445}}), home);
     check("diagnose: no address -- ports skipped, not tried", all.size() == 3 && all[2].verdict == V::Skip);
+
+    // ── SMB (milestone 6) ──────────────────────────────────────────────────
+    auto req = nd::smb2_negotiate_request();
+    check("smb: request is NetBIOS + 64-byte header + 36 + 4 dialects", req.size() == 4 + 64 + 36 + 8 &&
+          req[0] == 0 && req[3] == 108 && req[4] == 0xFE && req[5] == 'S');
+    auto reply = [](uint32_t status, int structure, int dialect) {
+        std::vector<unsigned char> b{0, 0, 0, 0, 0xFE, 'S', 'M', 'B'};
+        b.resize(4 + 64 + 8, 0);
+        for (int i = 0; i < 4; ++i) b[4 + 8 + i] = (status >> (8 * i)) & 0xFF;
+        b[68] = structure & 0xFF; b[69] = structure >> 8;
+        b[72] = dialect & 0xFF;   b[73] = dialect >> 8;
+        return b;
+    };
+    auto p = nd::parse_smb2_negotiate(reply(0, 65, 0x0302));
+    check("smb: a 3.0.2 reply reads as 3.0.2", p.smb2 && p.dialect == 0x0302 && nd::dialect_name(p.dialect) == "SMB 3.0.2");
+    p = nd::parse_smb2_negotiate(reply(0xC0000022, 65, 0));
+    check("smb: a refusal says so, with its status", !p.smb2 && p.why.find("0xC0000022") != std::string::npos, p.why);
+    p = nd::parse_smb2_negotiate({0, 0, 0, 0x20, 0xFF, 'S', 'M', 'B'});
+    check("smb: an SMB1 reply is called old", p.smb1_only && !p.smb2);
+    p = nd::parse_smb2_negotiate({'H', 'T', 'T', 'P', '/', '1', '.', '1'});
+    check("smb: not SMB is not SMB", !p.smb2 && !p.smb1_only && p.why == "it isn't SMB");
+    p = nd::parse_smb2_negotiate({0, 0});
+    check("smb: too short says so", !p.smb2 && p.why.find("short") != std::string::npos);
+
+    // A live server, when this machine runs one (the sandbox does; Scott's may not).
+    f = nd::check_port("127.0.0.1", 445, "smb", std::chrono::milliseconds(500));
+    if (f.verdict == V::Ok) {
+        f = nd::check_smb("127.0.0.1", 445, std::chrono::milliseconds(2000));
+        check("smb: the local server answers with a dialect", f.verdict == V::Ok &&
+              f.says.find("SMB ") != std::string::npos, f.says);
+    } else {
+        std::cout << "  - smb: no server on 127.0.0.1:445, live check skipped\n";
+    }
 
     std::cout << "-----------------------------------------------\n"
               << g_pass << " pass / " << g_fail << " fail\n";

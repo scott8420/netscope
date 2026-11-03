@@ -53,6 +53,11 @@ void Shell::bind_actions() {  // bindings: actions + recents group
     add_action("device-hide",      sigc::mem_fun(*this, &Shell::on_device_hide));
     add_action("device-diagnose",  sigc::mem_fun(*this, &Shell::on_device_diagnose));
     m_diag_ready.connect(sigc::mem_fun(*this, &Shell::on_diagnose_done));
+    add_action("device-shares",    sigc::mem_fun(*this, &Shell::on_device_shares));
+    // Milestone 6: any mount coming or going -- ours, or an eject from the
+    // Nautilus sidebar -- repaints the share rows.
+    m_mounter = std::make_unique<netmount::Mounter>();
+    m_mounter->set_on_change([this] { repaint_shares(); });
 
     // The model <-> journal <-> UI wiring. Choices ask the journal whether the
     // door is open (the one-door guard); the journal reads the selection and

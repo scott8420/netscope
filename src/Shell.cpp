@@ -29,6 +29,9 @@ Shell::Shell()
       m_show_hidden_check("shell.devices.show_hidden"),
       m_diag_button("shell.devices.diagnose"),
       m_diag_said("shell.devices.diag_said"),
+      m_shares_button("shell.devices.shares"),
+      m_share_list("shell.devices.share_list"),
+      m_share_said("shell.devices.share_said"),
       m_undo_button("shell.devices.undo"),
       m_redo_button("shell.devices.redo"),
       m_undo_said("shell.devices.said") {

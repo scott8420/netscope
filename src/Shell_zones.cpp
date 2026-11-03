@@ -133,6 +133,7 @@ void Shell::build_devices_page() {  // zone: the Devices page
     auto scroll = Gtk::make_managed<Gtk::ScrolledWindow>();
     scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     scroll->set_vexpand(true);
+    scroll->set_min_content_height(140);   // the share rows below must not squeeze it away
     scroll->set_child(m_device_list);
     m_device_list.set_selection_mode(Gtk::SelectionMode::SINGLE);
     m_device_list.signal_row_selected().connect([this](Gtk::ListBoxRow* row) {
@@ -160,6 +161,23 @@ void Shell::build_devices_page() {  // zone: the Devices page
     detail->append(*nl);
     detail->append(m_device_name);
     m_devices_page.append(*detail);
+
+    // Milestone 6 -- shares: a button, the rows, a line for what happened.
+    auto shares = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
+    m_shares_button.set_label("Shares");
+    m_shares_button.set_tooltip_text("List this device's SMB shares; mount them so they show in Files");
+    m_shares_button.set_action_name("win.device-shares");
+    shares->append(m_shares_button);
+    m_share_said.set_xalign(0.0f);
+    m_share_said.set_hexpand(true);
+    m_share_said.set_wrap(true);
+    m_share_said.set_selectable(true);
+    shares->append(m_share_said);
+    m_devices_page.append(*shares);
+    m_share_list.set_selection_mode(Gtk::SelectionMode::NONE);
+    m_share_list.add_css_class("boxed-list");
+    m_share_list.set_visible(false);
+    m_devices_page.append(m_share_list);
 
     m_diag_said.set_xalign(0.0f);
     m_diag_said.set_wrap(true);

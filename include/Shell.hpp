@@ -4,6 +4,7 @@
 #include "core/Feed.hpp"     // s002: the seam discovery comes through
 
 #include "netdiag/Checks.hpp"   // milestone 5: the checks
+#include "netmount/Mounter.hpp" // milestone 6: shares and mounts through GIO
 
 #include <glibmm/dispatcher.h>
 #include <mutex>
@@ -13,7 +14,9 @@
 #include <giomm/menu.h>
 #include <giomm/simpleaction.h>
 
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -90,6 +93,12 @@ private:
     void on_show_hidden();                       // category: handler: the "Show hidden" switch (a view, not a choice)
     void on_device_diagnose();                   // category: handler: run the checks off the main thread
     void on_diagnose_done();                     // category: handler: main thread -- show the findings
+    // Milestone 6 -- shares. Mounts are not choices: no journal, no undo step;
+    // Unmount is the visible opposite (ARCHITECTURE).
+    void on_device_shares();                     // category: handler: list the selected device's SMB shares
+    void on_share_mount(const std::string& uri);   // category: handler: mount one share (password dialog -> Keyring)
+    void on_share_unmount(const std::string& uri); // category: handler: unmount it
+    void on_share_open(const std::string& uri);    // category: handler: open it in the file manager
 
     // ── helpers ────────────────────────────────────────────────────────────
     void note_recent(const std::string& path);   // category: helper: push onto the list + persist
@@ -103,6 +112,8 @@ private:
     void select_device(const std::string& id, bool keys);  // category: helper: select (+ keyboard) after a repaint
     void update_undo_ui();                        // category: helper: Undo / Redo say what they would do, grey when nothing
     bool focus_is_text() const;                   // category: helper: the keyboard is in a text box (its own Ctrl+Z)
+    void repaint_shares();                        // category: helper: the selected device's shares + their state
+    Glib::RefPtr<Gio::MountOperation> mount_op(); // category: helper: a GTK password dialog, parented here
 
     // Titlebar: brand logo (start) + hamburger (end).
     widgets::Button     m_logo_button;   // frameless brand mark; opens About
@@ -145,6 +156,9 @@ private:
     widgets::CheckButton m_show_hidden_check;
     widgets::Button      m_diag_button;
     widgets::Label       m_diag_said;          // the findings, one plain line each
+    widgets::Button      m_shares_button;      // milestone 6: "Shares"
+    widgets::ListBox     m_share_list;         // one row per share: name, state, Mount/Unmount, Open
+    widgets::Label       m_share_said;         // what the last share action said
     widgets::Button    m_undo_button;
     widgets::Button    m_redo_button;
     widgets::Label     m_undo_said;            // "Undid: Hide “RASPI”"
@@ -171,6 +185,13 @@ private:
     std::string                       m_diag_for;        // the device they're about
     std::string                       m_diag_name;
     std::jthread                      m_diag_thread;
+
+    // Shares (milestone 6). A view of what GIO said, per device; not the
+    // model -- the feed doesn't know shares, and nothing here is a choice.
+    std::unique_ptr<netmount::Mounter>                      m_mounter;
+    std::map<core::DeviceId, std::vector<netmount::Share>> m_shares;
+    std::map<core::DeviceId, std::string>                  m_share_notes;
+    std::set<std::string>                                   m_share_busy;   // URIs (and roots) in flight
 };
 
 }  // namespace netscope

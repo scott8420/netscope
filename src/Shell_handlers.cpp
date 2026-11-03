@@ -11,6 +11,9 @@
 
 #include <filesystem>
 #include <glibmm/markup.h>
+#include <giomm/appinfo.h>
+
+#include <algorithm>
 
 // Shell_handlers.cpp -- HANDLERS. Slot bodies: what a user action actually does.
 // Each is small and single-concern; orchestration it shares lives in helpers.
@@ -159,6 +162,87 @@ void Shell::on_show_hidden() {  // handler: a view setting -- not a step
     if (m_painting) return;
     m_show_hidden = m_show_hidden_check.get_active();
     queue_devices_repaint();
+}
+
+// ── Milestone 6 -- shares ──────────────────────────────────────────────────
+// Mounts are not choices (ARCHITECTURE): nothing here touches the journal.
+// GIO answers on the main loop, so these handlers start work and return; the
+// answers repaint. The password dialog is GTK's own: "Remember forever" puts
+// the password in GNOME Keyring through gvfs, and gvfs finds it there next time.
+
+void Shell::on_device_shares() {  // handler: list the selected device's SMB shares
+    const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
+    if (!seen || !m_mounter) return;
+    const auto& s = seen->sighting;
+    const auto schemes = netmount::schemes_of(s);
+    if (std::find(schemes.begin(), schemes.end(), "smb") == schemes.end()) {
+        m_share_notes[s.id] = "No SMB here. (AFP comes with milestone 7; SFTP and NFS with 10.)";
+        repaint_shares();
+        return;
+    }
+    const auto root = netmount::root_uri("smb", netmount::host_for(s));
+    if (m_share_busy.count(root)) return;
+    m_share_busy.insert(root);
+    m_share_notes[s.id] = "Asking " + root + "…";
+    repaint_shares();
+    if (auto lg = log::get(log::Area::Mounts)) lg->info("shares {}: listing {}", s.id, root);
+    const std::string id = s.id;
+    m_mounter->list_shares(root, mount_op(),
+        [this, id, root](const std::vector<netmount::Share>& found, const netmount::Outcome& o) {
+            m_share_busy.erase(root);
+            auto lg = log::get(log::Area::Mounts);
+            if (o.ok) {
+                m_shares[id] = found;
+                m_share_notes[id] = found.empty() ? "No shares offered." :
+                                    std::to_string(found.size()) + (found.size() == 1 ? " share." : " shares.");
+                if (lg) lg->info("shares {}: {}", id, found.size());
+            } else {
+                m_share_notes[id] = o.cancelled ? "" : "Couldn't list shares: " + o.says;
+                if (lg) lg->warn("shares {}: {}", id, o.says);
+            }
+            repaint_shares();
+        });
+}
+
+void Shell::on_share_mount(const std::string& uri) {  // handler: mount one share
+    if (!m_mounter || m_share_busy.count(uri)) return;
+    m_share_busy.insert(uri);
+    const std::string id = m_sel;
+    m_share_notes[id] = "Mounting " + uri + "…";
+    repaint_shares();
+    if (auto lg = log::get(log::Area::Mounts)) lg->info("mount {}", uri);
+    m_mounter->mount(uri, mount_op(), [this, id, uri](const netmount::Outcome& o) {
+        m_share_busy.erase(uri);
+        m_share_notes[id] = o.ok ? "Mounted: it's in Files now." : o.cancelled ? "" : "Couldn't mount: " + o.says;
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("mount {}: {}", uri, o.ok ? "ok" : o.says);
+        repaint_shares();
+    });
+}
+
+void Shell::on_share_unmount(const std::string& uri) {  // handler: unmount it
+    if (!m_mounter || m_share_busy.count(uri)) return;
+    m_share_busy.insert(uri);
+    const std::string id = m_sel;
+    m_share_notes[id] = "Unmounting…";
+    repaint_shares();
+    if (auto lg = log::get(log::Area::Mounts)) lg->info("unmount {}", uri);
+    m_mounter->unmount(uri, mount_op(), [this, id, uri](const netmount::Outcome& o) {
+        m_share_busy.erase(uri);
+        m_share_notes[id] = o.ok ? "Unmounted." : o.cancelled ? "" : "Couldn't unmount: " + o.says;
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("unmount {}: {}", uri, o.ok ? "ok" : o.says);
+        repaint_shares();
+    });
+}
+
+void Shell::on_share_open(const std::string& uri) {  // handler: open it in the file manager
+    try {
+        Gio::AppInfo::launch_default_for_uri(uri);
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("open {}", uri);
+    } catch (const Glib::Error& e) {
+        m_share_notes[m_sel] = "Couldn't open it: " + std::string(e.what());
+        if (auto lg = log::get(log::Area::Mounts)) lg->warn("open {}: {}", uri, e.what());
+        repaint_shares();
+    }
 }
 
 }  // namespace netscope

@@ -205,6 +205,8 @@ std::vector<Finding> diagnose(const core::Sighting& s, const Facts& f, std::chro
             continue;
         }
         out.push_back(check_port(a, svc.port, svc.kind, timeout));
+        if (svc.kind == "smb" && out.back().verdict == Verdict::Ok)
+            out.push_back(check_smb(a, svc.port, timeout));
     }
     return out;
 }

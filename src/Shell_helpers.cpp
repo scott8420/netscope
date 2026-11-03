@@ -12,6 +12,7 @@
 #include <glibmm/miscutils.h>
 #include <glibmm/variant.h>
 #include <glibmm/markup.h>
+#include <gtk/gtk.h>   // GtkMountOperation: gtkmm 4 has no wrapper
 
 #include <filesystem>
 
@@ -220,6 +221,7 @@ void Shell::repaint_devices() {  // helper
     if (!m_device_name.has_focus() || !seen) m_device_name.set_text(c.nickname);
     m_device_name.set_placeholder_text(seen ? seen->sighting.name : std::string{});
     m_show_hidden_check.set_active(m_show_hidden);
+    repaint_shares();
     m_painting = false;
 
     if (m_keys_to_list) {
@@ -259,6 +261,69 @@ bool Shell::focus_is_text() const {  // helper
     for (const Gtk::Widget* w = get_focus(); w; w = w->get_parent())
         if (dynamic_cast<const Gtk::TextView*>(w) || dynamic_cast<const Gtk::Editable*>(w)) return true;
     return false;
+}
+
+// ── Milestone 6 -- shares ──────────────────────────────────────────────────
+
+Glib::RefPtr<Gio::MountOperation> Shell::mount_op() {  // helper
+    // GTK's dialog: user / password / domain, Anonymous when the server allows
+    // it, and Forget / Remember until logout / Remember forever.
+    // gtkmm 4 doesn't wrap GtkMountOperation, so make it in C and hand it to
+    // giomm as the GMountOperation it is (we own the one reference).
+    GMountOperation* op = gtk_mount_operation_new(GTK_WINDOW(gobj()));
+    return Glib::wrap(op, false);
+}
+
+void Shell::repaint_shares() {  // helper: the selected device's shares + their state
+    while (auto* c = m_share_list.get_first_child()) m_share_list.remove(*c);
+    const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
+    bool has_smb = false;
+    std::string root;
+    if (seen) {
+        const auto schemes = netmount::schemes_of(seen->sighting);
+        has_smb = std::find(schemes.begin(), schemes.end(), "smb") != schemes.end();
+        root = netmount::root_uri("smb", netmount::host_for(seen->sighting));
+    }
+    m_shares_button.set_sensitive(has_smb && !m_share_busy.count(root));
+    const auto note = m_share_notes.find(m_sel);
+    m_share_said.set_text(note == m_share_notes.end() ? std::string{} : note->second);
+
+    const auto it = m_shares.find(m_sel);
+    if (!seen || it == m_shares.end() || it->second.empty() || !m_mounter) {
+        m_share_list.set_visible(false);
+        return;
+    }
+    const auto roots = m_mounter->mount_roots();
+    for (const auto& sh : it->second) {
+        const bool mounted = netmount::is_mounted(sh.uri, roots);
+        const bool busy    = m_share_busy.count(sh.uri) > 0;
+        auto row = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
+        row->set_margin(6);
+        auto name = Gtk::make_managed<Gtk::Label>();
+        name->set_markup("<b>" + Glib::Markup::escape_text(sh.name) + "</b>  <tt>" +
+                         Glib::Markup::escape_text(sh.uri) + "</tt>");
+        name->set_xalign(0.0f);
+        name->set_hexpand(true);
+        name->set_ellipsize(Pango::EllipsizeMode::MIDDLE);
+        row->append(*name);
+        auto state = Gtk::make_managed<Gtk::Label>(busy ? "…" : mounted ? "mounted" : "");
+        state->add_css_class("dim-label");
+        row->append(*state);
+        auto act = Gtk::make_managed<Gtk::Button>(mounted ? "Unmount" : "Mount");
+        act->set_sensitive(!busy);
+        const std::string uri = sh.uri;
+        act->signal_clicked().connect([this, uri, mounted] {
+            if (mounted) on_share_unmount(uri); else on_share_mount(uri);
+        });
+        row->append(*act);
+        auto open = Gtk::make_managed<Gtk::Button>("Open");
+        open->set_sensitive(mounted && !busy);
+        open->set_tooltip_text("Open in Files");
+        open->signal_clicked().connect([this, uri] { on_share_open(uri); });
+        row->append(*open);
+        m_share_list.append(*row);
+    }
+    m_share_list.set_visible(true);
 }
 
 }  // namespace netscope

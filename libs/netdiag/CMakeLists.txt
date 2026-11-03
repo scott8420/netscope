@@ -1,5 +1,5 @@
 # libs/netdiag -- the diagnostic checks (milestone 5). No GTK, no new deps.
-add_library(netdiag STATIC src/Checks.cpp)
+add_library(netdiag STATIC src/Checks.cpp src/Smb.cpp)
 target_include_directories(netdiag PUBLIC include)
 target_link_libraries(netdiag PUBLIC netscope_core)
 

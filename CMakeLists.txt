@@ -51,6 +51,7 @@ target_include_directories(netscope_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/thi
 # ── libs/ -- each library arrives with the milestone that needs it ──────────────
 add_subdirectory(libs/netdiscover)   # milestone 4: Avahi
 add_subdirectory(libs/netdiag)       # milestone 5: address, route, port
+add_subdirectory(libs/netmount)      # milestone 6: GIO shares and mounts
 
 # ── Headless selftest -- exercises the core with no display ────────────────────
 # Stones (Cairn's demo model) left the app in s002; it stays here as the
@@ -105,6 +106,6 @@ add_executable(netscope
     src/Log.cpp
 )
 target_include_directories(netscope PRIVATE include ${GTKMM_INCLUDE_DIRS})
-target_link_libraries(netscope     PRIVATE ${GTKMM_LIBRARIES} netscope_core netdiscover netdiag spdlog::spdlog)
+target_link_libraries(netscope     PRIVATE ${GTKMM_LIBRARIES} netscope_core netdiscover netdiag netmount spdlog::spdlog)
 target_link_directories(netscope   PRIVATE ${GTKMM_LIBRARY_DIRS})
 target_compile_options(netscope    PRIVATE ${GTKMM_CFLAGS_OTHER})

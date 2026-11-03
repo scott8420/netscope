@@ -8,7 +8,9 @@
 namespace netscope::log {
 
 namespace {
-constexpr int kAreaCount = 6;
+// The last Area plus one. A new area goes at the end of the enum AND here;
+// get() returns null past the table rather than reading off its end.
+constexpr int kAreaCount = static_cast<int>(Area::Mounts) + 1;
 
 const char* area_name(Area a) {
     switch (a) {
@@ -18,6 +20,7 @@ const char* area_name(Area a) {
         case Area::Recents:  return "recents";
         case Area::Io:       return "io";
         case Area::Devices:  return "devices";
+        case Area::Mounts:   return "mounts";
     }
     return "?";
 }
@@ -40,7 +43,8 @@ void init() {
 }
 
 std::shared_ptr<spdlog::logger> get(Area area) {
-    return loggers()[static_cast<std::size_t>(area)];
+    const auto i = static_cast<std::size_t>(area);
+    return i < loggers().size() ? loggers()[i] : nullptr;
 }
 
 void set_level(Area area, spdlog::level::level_enum level) {
