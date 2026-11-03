@@ -1,17 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- NetScope: a small network, a hub, five devices, the links between
+       them, and one device just found (amber). Teal tile kept from s001. -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#1f5f6b"/><stop offset="1" stop-color="#0e2f3a"/>
     </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#ffd166" stop-opacity=".55"/><stop offset="1" stop-color="#ffd166" stop-opacity="0"/>
+    </radialGradient>
   </defs>
   <rect x="8" y="8" width="112" height="112" rx="24" fill="url(#bg)"/>
-  <g fill="none" stroke="#9fe3df" stroke-width="3">
-    <circle cx="64" cy="64" r="42" opacity=".9"/>
-    <circle cx="64" cy="64" r="26" opacity=".55"/>
-    <path d="M64 14v14M64 100v14M14 64h14M100 64h14" stroke-linecap="round" stroke-width="4"/>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="none" stroke="#ffffff" stroke-opacity=".08" stroke-width="2"/>
+  <!-- links: hub spokes, then the ring between neighbours (fainter) -->
+  <g stroke="#9fe3df" stroke-linecap="round" fill="none">
+    <path stroke-width="3.5" opacity=".85" d="M62 66 L34 38 M62 66 L90 32 M62 66 L98 80 M62 66 L36 94"/>
+    <path stroke-width="3.5" opacity=".85" stroke="#ffd166" d="M62 66 L72 102"/>
+    <path stroke-width="2.5" opacity=".4" d="M34 38 L90 32 L98 80 M36 94 L72 102 L98 80 M34 38 L36 94"/>
   </g>
-  <path d="M64 64 L94 34 A42 42 0 0 1 106 64 Z" fill="#9fe3df" opacity=".28"/>
-  <circle cx="82" cy="46" r="8" fill="#ffd166"/>
-  <circle cx="44" cy="52" r="4.5" fill="#9fe3df"/>
-  <circle cx="58" cy="88" r="4.5" fill="#9fe3df"/>
+  <!-- the found device -->
+  <circle cx="72" cy="102" r="15" fill="url(#glow)"/>
+  <circle cx="72" cy="102" r="7.5" fill="#ffd166"/>
+  <!-- devices -->
+  <g fill="#9fe3df">
+    <circle cx="34" cy="38" r="7"/>
+    <circle cx="90" cy="32" r="7"/>
+    <circle cx="98" cy="80" r="7"/>
+    <circle cx="36" cy="94" r="6"/>
+  </g>
+  <!-- the hub: this machine -->
+  <circle cx="62" cy="66" r="12" fill="#0e2f3a" stroke="#e8fbf9" stroke-width="4"/>
+  <circle cx="62" cy="66" r="4.5" fill="#e8fbf9"/>
 </svg>
