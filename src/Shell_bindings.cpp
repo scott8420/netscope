@@ -79,6 +79,7 @@ void Shell::bind_actions() {  // bindings: actions + recents group
     m_journal.set_selection_source([this] {
         return m_sel.empty() ? std::vector<std::string>{} : std::vector<std::string>{m_sel};
     });
+    m_journal.set_exists([this](const std::string& id) { return m_net.get(id).has_value(); });
     m_journal.set_on_change([this] { update_undo_ui(); });
 
     // The feed seam: the source's thread pushes and emits; the dispatcher

@@ -75,6 +75,11 @@ int load_choices(const std::string& file, Choices& into) {
             if (e.contains("nickname")  && e["nickname"].is_string())   c.nickname  = e["nickname"].get<std::string>();
             if (e.contains("favourite") && e["favourite"].is_boolean()) c.favourite = e["favourite"].get<bool>();
             if (e.contains("hidden")    && e["hidden"].is_boolean())    c.hidden    = e["hidden"].get<bool>();
+            if (e.contains("pins") && e["pins"].is_array())
+                for (const auto& p : e["pins"])
+                    if (p.is_object() && p.contains("uri") && p["uri"].is_string() && !p["uri"].get<std::string>().empty())
+                        c.pins.push_back({p.contains("name") && p["name"].is_string() ? p["name"].get<std::string>() : "",
+                                          p["uri"].get<std::string>()});
             if (c == Choice{}) continue;
             into.put(id, c);
             ++n;
@@ -93,6 +98,11 @@ bool save_choices(const std::string& file, const Choices& from) {
         if (!c.nickname.empty()) e["nickname"]  = c.nickname;
         if (c.favourite)         e["favourite"] = true;
         if (c.hidden)            e["hidden"]    = true;
+        if (!c.pins.empty()) {
+            nlohmann::json ps = nlohmann::json::array();
+            for (const auto& p : c.pins) ps.push_back({{"name", p.name}, {"uri", p.uri}});
+            e["pins"] = ps;
+        }
         devs[id] = e;
     }
     nlohmann::json j;
@@ -218,11 +228,29 @@ bool set_hidden(DeviceJournal& j, Choices& c, const Network& n, const DeviceId& 
     return change(j, c, n, id, label, [&](Choice& v) { v.hidden = on; });
 }
 
+bool is_pinned(const Choices& c, const DeviceId& id, const std::string& uri) {
+    const auto pins = c.of(id).pins;
+    return std::any_of(pins.begin(), pins.end(), [&](const Pin& p) { return p.uri == uri; });
+}
+
+bool set_pinned(DeviceJournal& j, Choices& c, const Network& n, const DeviceId& id, const Pin& share, bool on) {
+    if (share.uri.empty()) return false;
+    const std::string what = "“" + (share.name.empty() ? share.uri : share.name) + "”";
+    const std::string label = (on ? "Pin " : "Unpin ") + what + " on " + quoted(c, n, id);
+    return change(j, c, n, id, label, [&](Choice& v) {
+        auto it = std::find_if(v.pins.begin(), v.pins.end(), [&](const Pin& p) { return p.uri == share.uri; });
+        if (on && it == v.pins.end()) v.pins.push_back(share);
+        if (!on && it != v.pins.end()) v.pins.erase(it);
+    });
+}
+
 const std::vector<Verb>& verbs() {
     static const std::vector<Verb> table = {
         {"rename",      [](DeviceJournal& j, Choices& c, const Network& n, const DeviceId& f) { rename(j, c, n, f, "Basement"); }},
         {"favourite",   [](DeviceJournal& j, Choices& c, const Network& n, const DeviceId& f) { set_favourite(j, c, n, f, true); }},
         {"hide",        [](DeviceJournal& j, Choices& c, const Network& n, const DeviceId& f) { set_hidden(j, c, n, f, true); }},
+        {"pin",         [](DeviceJournal& j, Choices& c, const Network& n, const DeviceId& f) {
+            set_pinned(j, c, n, f, Pin{"pub", "smb://" + f + "/pub/"}, true); }},
     };
     return table;
 }

@@ -405,6 +405,43 @@ int main() {
             check("devices: no stray writes", f.c.strays() == 0);
         }
 
+        {   // s003 fix: undoing a device's FIRST choice leaves no record, but the
+            // device is still there -- the selection must stay on it.
+            Fix f;
+            f.j.set_selection_source([] { return std::vector<std::string>{"tc01.local"}; });
+            devices::set_favourite(f.j, f.c, f.n, "tc01.local", true);
+            check("select: without exists(), a record-less device was dropped (the old bug)",
+                  f.j.undo().selection.empty());
+            f.j.redo();
+            f.j.set_exists([&](const std::string& id) { return f.n.get(id).has_value(); });
+            const auto r = f.j.undo();
+            check("select: with exists(), undo keeps the device selected",
+                  r.selection == std::vector<std::string>{"tc01.local"});
+        }
+
+        {   // Pins (milestone 7): a choice like any other, by URI, in order.
+            Fix f;
+            const Pin pub{"pub", "smb://raspi.local/pub/"}, priv{"priv", "smb://raspi.local/priv/"};
+            check("pin: a step", devices::set_pinned(f.j, f.c, f.n, "raspi.local", pub, true) && f.j.size() == 1);
+            check("pin: the label names share and device", f.j.undo_label() == "Pin “pub” on “RASPI”", f.j.undo_label());
+            check("pin: pinning it again is no step", !devices::set_pinned(f.j, f.c, f.n, "raspi.local", pub, true) && f.j.size() == 1);
+            devices::set_pinned(f.j, f.c, f.n, "raspi.local", priv, true);
+            check("pin: kept in the order pinned", f.c.of("raspi.local").pins == std::vector<Pin>{pub, priv});
+            check("pin: is_pinned by URI", devices::is_pinned(f.c, "raspi.local", priv.uri) &&
+                  !devices::is_pinned(f.c, "tc01.local", priv.uri));
+            devices::set_pinned(f.j, f.c, f.n, "raspi.local", pub, false);
+            check("pin: unpin removes just that one", f.c.of("raspi.local").pins == std::vector<Pin>{priv} &&
+                  f.j.undo_label() == "Unpin “pub” on “RASPI”", f.j.undo_label());
+            f.j.undo();
+            check("pin: undo of unpin puts it back in place", f.c.of("raspi.local").pins == std::vector<Pin>{pub, priv});
+            check("pin: unknown device, empty URI -- no step", !devices::set_pinned(f.j, f.c, f.n, "nope.local", pub, true) &&
+                  !devices::set_pinned(f.j, f.c, f.n, "raspi.local", Pin{"x", ""}, true));
+            devices::set_pinned(f.j, f.c, f.n, "raspi.local", pub, false);
+            devices::set_pinned(f.j, f.c, f.n, "raspi.local", priv, false);
+            check("pin: last one gone, no record kept", f.c.count() == 0);
+            check("pin: no stray writes", f.c.strays() == 0);
+        }
+
         {   // The choices pump: save -> load round-trips, defaults omitted,
             // a load is not a step and not a stray.
             namespace fs = std::filesystem;
@@ -415,6 +452,8 @@ int main() {
             devices::rename(f.j, f.c, f.n, "tc01.local", "Basement \u201cTC\u201d");
             devices::set_favourite(f.j, f.c, f.n, "tc02.local", true);
             devices::set_hidden(f.j, f.c, f.n, "raspi.local", true);
+            devices::set_pinned(f.j, f.c, f.n, "raspi.local", Pin{"Time Machine", "smb://raspi.local/Time%20Machine/"}, true);
+            devices::set_pinned(f.j, f.c, f.n, "raspi.local", Pin{"pub", "smb://raspi.local/pub/"}, true);
             check("choices: saved", save_choices(file, f.c));
             Choices back;
             back.set_door([] { return false; });   // door shut: only Loading may write

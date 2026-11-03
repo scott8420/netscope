@@ -92,6 +92,11 @@ public:
 
     // The UI tells the journal how to read the selection (optional).
     void set_selection_source(std::function<std::vector<Id>()> f) { m_sel = std::move(f); }
+    // Whether a selectable thing still exists (optional). Without it, "exists"
+    // means "the store has a record" -- right for Stones, wrong for devices,
+    // whose default choices have NO record while the device is still there
+    // (s003: undoing a first Favourite dropped the selection).
+    void set_exists(std::function<bool(const Id&)> f) { m_exists = std::move(f); }
     // Called after every change to the journal itself (a step kept, undone,
     // redone, cleared) -- the UI re-labels Undo / Redo and greys them here.
     void set_on_change(std::function<void()> f) { m_changed = std::move(f); }
@@ -230,6 +235,7 @@ private:
     bool                              m_gesture = false;
     Step                              m_open;        // the gesture being recorded
     std::function<std::vector<Id>()>  m_sel;
+    std::function<bool(const Id&)> m_exists;
     std::function<void()>             m_changed;
 
     template <class Op>
@@ -237,6 +243,7 @@ private:
         if constexpr (std::is_void_v<std::invoke_result_t<Op&>>) { op(); return {}; }
         else return op();
     }
+    bool exists(const Id& id) const { return m_exists ? m_exists(id) : bool(m_store.get(id)); }
     std::vector<Id> selection() const { return m_sel ? m_sel() : std::vector<Id>{}; }
     static bool has(const Step& st, const Id& id) {
         for (const auto& e : st.entries) if (e.id == id) return true;
@@ -256,10 +263,10 @@ private:
     // if that leaves nothing, the first record the step touched that exists.
     std::vector<Id> pick(const std::vector<Id>& want, const Step& st, bool undoing) const {
         std::vector<Id> out;
-        for (const auto& id : want) if (m_store.get(id)) out.push_back(id);
+        for (const auto& id : want) if (exists(id)) out.push_back(id);
         if (!out.empty()) return out;
         for (const auto& e : st.entries)
-            if ((undoing ? e.before : e.after) && m_store.get(e.id)) return {e.id};
+            if (m_exists ? m_exists(e.id) : ((undoing ? e.before : e.after) && m_store.get(e.id))) return {e.id};
         return {};
     }
     void keep(Step&& st) {

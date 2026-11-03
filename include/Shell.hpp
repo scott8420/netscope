@@ -99,6 +99,8 @@ private:
     void on_share_mount(const std::string& uri);   // category: handler: mount one share (password dialog -> Keyring)
     void on_share_unmount(const std::string& uri); // category: handler: unmount it
     void on_share_open(const std::string& uri);    // category: handler: open it in the file manager
+    // Milestone 7 -- pinning IS a choice: through the journal, Ctrl+Z undoes it.
+    void on_share_pin(const netmount::Share& share, bool on);  // category: handler: pin / unpin a share
 
     // ── helpers ────────────────────────────────────────────────────────────
     void note_recent(const std::string& path);   // category: helper: push onto the list + persist

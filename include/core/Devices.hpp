@@ -76,10 +76,19 @@ private:
 };
 
 // ── what Scott chose ───────────────────────────────────────────────────────
+// A share Scott pinned (milestone 7): listed without browsing, and what the
+// Quick Settings tile will offer. Kept by URI; the name is what GIO called it.
+struct Pin {
+    std::string name;   // "pub"
+    std::string uri;    // "smb://raspi.local/pub/"
+    bool operator==(const Pin&) const = default;
+};
+
 struct Choice {
-    std::string nickname;          // "" = show the advertised name
-    bool        favourite = false; // sorts to the top
-    bool        hidden    = false; // off the list unless "Show hidden"
+    std::string      nickname;          // "" = show the advertised name
+    bool             favourite = false; // sorts to the top
+    bool             hidden    = false; // off the list unless "Show hidden"
+    std::vector<Pin> pins;              // in the order pinned
     bool operator==(const Choice&) const = default;
 };
 
@@ -122,7 +131,7 @@ using DeviceJournal = Journal<Choices>;
 
 // ── persistence: the choices pump (s002, milestone 3) ──────────────────────
 // On disk: { "version": 1, "devices": { "tc01.local": { "nickname": "Basement",
-// "favourite": true } } }. Fields at their default are omitted (Folio's
+// "favourite": true, "pins": [ { "name": "pub", "uri": "smb://..." } ] } } }. Fields at their default are omitted (Folio's
 // lesson: don't rewrite what didn't change). Encode and decode sit together in
 // Devices.cpp so they can't drift. The UI resolves the path (XDG) and hands it
 // in. A load is not a user choice: it runs inside Choices::Loading and is not
@@ -156,6 +165,9 @@ namespace devices {
 bool rename(DeviceJournal& j, Choices& c, const Network& n, const DeviceId& id, const std::string& nickname);
 bool set_favourite(DeviceJournal& j, Choices& c, const Network& n, const DeviceId& id, bool on);
 bool set_hidden(DeviceJournal& j, Choices& c, const Network& n, const DeviceId& id, bool on);
+// Milestone 7. Pinning a pinned URI, or unpinning one that isn't: no step.
+bool set_pinned(DeviceJournal& j, Choices& c, const Network& n, const DeviceId& id, const Pin& share, bool on);
+bool is_pinned(const Choices& c, const DeviceId& id, const std::string& uri);
 
 // The verb table: every verb, by name, runnable on a fixture. The selftest
 // walks it (one door, undo restores, redo re-applies). A verb the page offers

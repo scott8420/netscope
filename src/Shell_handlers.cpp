@@ -165,7 +165,7 @@ void Shell::on_show_hidden() {  // handler: a view setting -- not a step
 }
 
 // ── Milestone 6 -- shares ──────────────────────────────────────────────────
-// Mounts are not choices (ARCHITECTURE): nothing here touches the journal.
+// Mounts are not choices (ARCHITECTURE): only Pin / Unpin touches the journal.
 // GIO answers on the main loop, so these handlers start work and return; the
 // answers repaint. The password dialog is GTK's own: "Remember forever" puts
 // the password in GNOME Keyring through gvfs, and gvfs finds it there next time.
@@ -232,6 +232,11 @@ void Shell::on_share_unmount(const std::string& uri) {  // handler: unmount it
         if (auto lg = log::get(log::Area::Mounts)) lg->info("unmount {}: {}", uri, o.ok ? "ok" : o.says);
         repaint_shares();
     });
+}
+
+void Shell::on_share_pin(const netmount::Share& share, bool on) {  // handler: pin / unpin -- a choice, an undo step
+    if (m_sel.empty()) return;
+    core::devices::set_pinned(m_journal, m_choices, m_net, m_sel, core::Pin{share.name, share.uri}, on);
 }
 
 void Shell::on_share_open(const std::string& uri) {  // handler: open it in the file manager

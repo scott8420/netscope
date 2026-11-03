@@ -288,19 +288,27 @@ void Shell::repaint_shares() {  // helper: the selected device's shares + their 
     const auto note = m_share_notes.find(m_sel);
     m_share_said.set_text(note == m_share_notes.end() ? std::string{} : note->second);
 
-    const auto it = m_shares.find(m_sel);
-    if (!seen || it == m_shares.end() || it->second.empty() || !m_mounter) {
+    // Pinned shares first (milestone 7: listed without browsing), then what
+    // the last Shares press found that isn't pinned.
+    std::vector<netmount::Share> list;
+    if (seen)
+        for (const auto& p : m_choices.of(m_sel).pins) list.push_back({p.name, p.uri});
+    if (const auto it = m_shares.find(m_sel); seen && it != m_shares.end())
+        for (const auto& sh : it->second)
+            if (!core::devices::is_pinned(m_choices, m_sel, sh.uri)) list.push_back(sh);
+    if (list.empty() || !m_mounter) {
         m_share_list.set_visible(false);
         return;
     }
     const auto roots = m_mounter->mount_roots();
-    for (const auto& sh : it->second) {
+    for (const auto& sh : list) {
         const bool mounted = netmount::is_mounted(sh.uri, roots);
         const bool busy    = m_share_busy.count(sh.uri) > 0;
         auto row = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
         row->set_margin(6);
         auto name = Gtk::make_managed<Gtk::Label>();
-        name->set_markup("<b>" + Glib::Markup::escape_text(sh.name) + "</b>  <tt>" +
+        const bool is_pin = core::devices::is_pinned(m_choices, m_sel, sh.uri);
+        name->set_markup(std::string(is_pin ? "\U0001F4CC " : "") + "<b>" + Glib::Markup::escape_text(sh.name) + "</b>  <tt>" +
                          Glib::Markup::escape_text(sh.uri) + "</tt>");
         name->set_xalign(0.0f);
         name->set_hexpand(true);
@@ -309,6 +317,12 @@ void Shell::repaint_shares() {  // helper: the selected device's shares + their 
         auto state = Gtk::make_managed<Gtk::Label>(busy ? "…" : mounted ? "mounted" : "");
         state->add_css_class("dim-label");
         row->append(*state);
+        const bool pinned = core::devices::is_pinned(m_choices, m_sel, sh.uri);
+        auto pin = Gtk::make_managed<Gtk::Button>(pinned ? "Unpin" : "Pin");
+        pin->set_tooltip_text(pinned ? "Stop listing it here without a search" : "Keep it listed here, and in the Quick Settings tile");
+        const netmount::Share share = sh;
+        pin->signal_clicked().connect([this, share, pinned] { on_share_pin(share, !pinned); });
+        row->append(*pin);
         auto act = Gtk::make_managed<Gtk::Button>(mounted ? "Unmount" : "Mount");
         act->set_sensitive(!busy);
         const std::string uri = sh.uri;
