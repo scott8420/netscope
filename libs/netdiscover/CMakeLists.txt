@@ -5,6 +5,9 @@ pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
 add_library(netdiscover STATIC
     src/Aggregator.cpp
     src/AvahiSource.cpp
+    src/Ssdp.cpp            # milestone 13: UPnP / SSDP
+    src/Merge.cpp
+    src/SsdpSource.cpp
 )
 target_include_directories(netdiscover PUBLIC include)
 target_link_libraries(netdiscover PUBLIC netscope_core PRIVATE PkgConfig::GIO)

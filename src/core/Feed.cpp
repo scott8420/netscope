@@ -23,6 +23,7 @@ int apply(Network& net, const std::vector<FeedEvent>& events) {
         if (e.kind == FeedEvent::Kind::Note) continue;
         const auto before = net.get(e.sighting.id);
         if (e.kind == FeedEvent::Kind::Seen) net.seen(e.sighting);
+        else if (e.kind == FeedEvent::Kind::Merged) net.forget(e.sighting.id);
         else                                  net.lost(e.sighting.id);
         if (net.get(e.sighting.id) != before) ++changed;
     }

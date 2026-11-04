@@ -28,7 +28,10 @@
 namespace netscope::core {
 
 struct FeedEvent {
-    enum class Kind { Seen, Lost, Note };
+    // Merged (milestone 13): this id is now part of another device (a UPnP
+    // device folded into the Avahi host at its address) -- gone from the
+    // list, not stale.
+    enum class Kind { Seen, Lost, Note, Merged };
     Kind        kind = Kind::Seen;
     Sighting    sighting;    // Lost uses sighting.id only
     std::string note;        // Note: the source's own state, in plain words

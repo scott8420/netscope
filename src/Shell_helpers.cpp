@@ -108,7 +108,7 @@ void Shell::drain_feed() {  // helper
             if (lg) lg->info("note: {}", e.note);
             queue_devices_repaint();
         } else if (lg) {
-            lg->info("{} {}", e.kind == core::FeedEvent::Kind::Seen ? "seen" : "lost", e.sighting.id);
+            lg->info("{} {}", e.kind == core::FeedEvent::Kind::Seen ? "seen" : e.kind == core::FeedEvent::Kind::Merged ? "merged" : "lost", e.sighting.id);
         }
     }
     if (changed > 0 && m_sel.empty()) {

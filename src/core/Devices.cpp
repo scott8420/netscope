@@ -20,6 +20,12 @@ void Network::seen(const Sighting& s) {
     if (m_changed) m_changed();
 }
 
+bool Network::forget(const DeviceId& id) {
+    if (m_items.erase(id) == 0) return false;
+    if (m_changed) m_changed();
+    return true;
+}
+
 bool Network::lost(const DeviceId& id) {
     const auto it = m_items.find(id);
     if (it == m_items.end()) return false;
@@ -129,6 +135,7 @@ bool save_choices(const std::string& file, const Choices& from) {
 std::string service_label(const std::string& kind) {
     if (kind == "device-info" || kind == "adisk") return {};
     if (kind == "afp")  return "AFP";
+    if (kind == "upnp") return "UPnP";
     if (kind == "smb")  return "SMB";
     if (kind == "nfs")  return "NFS";
     if (kind == "ssh")  return "SSH";

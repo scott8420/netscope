@@ -63,6 +63,8 @@ public:
     void seen(const Sighting& s);
     // A device withdrew or timed out: kept, marked stale. Returns false if unknown.
     bool lost(const DeviceId& id);
+    // It is part of another device now (milestone 13): off the list entirely.
+    bool forget(const DeviceId& id);
 
     std::optional<Seen>   get(const DeviceId& id) const;
     std::vector<DeviceId> ids() const;

@@ -1,6 +1,9 @@
 // netdiscover_selftest -- the Aggregator's grouping rules, headless.
 #include "netdiscover/Aggregator.hpp"
+#include "netdiscover/Merge.hpp"
+#include "netdiscover/Ssdp.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <string>
 
@@ -74,6 +77,96 @@ int main() {
         check("loopback goes last", e.size() == 1 &&
               e[0].sighting.addresses == std::vector<std::string>{"192.0.2.2", "127.0.0.1"});
         check("no host: ignored", a.resolved(key("x", "_ssh._tcp"), {"", "", 22, {}}).empty());
+    }
+
+
+    // ── Milestone 13: SSDP ────────────────────────────────────────────────
+    {
+        namespace sp = nd::ssdp;
+        const std::string answer =
+            "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=120\r\nEXT:\r\n"
+            "LOCATION: http://192.0.2.20:8200/rootDesc.xml\r\nSERVER: Linux/6.1 UPnP/1.0 MiniDLNA/1.3.3\r\n"
+            "ST: urn:schemas-upnp-org:device:MediaServer:1\r\n"
+            "USN: uuid:4D696E69-444C-164E-9D41-B827EB0A1B2C::urn:schemas-upnp-org:device:MediaServer:1\r\n\r\n";
+        const auto r = sp::parse(answer);
+        check("ssdp: an answer parses", r && r->kind == sp::Reply::Kind::Answer);
+        check("ssdp: location, server, max-age", r && r->location == "http://192.0.2.20:8200/rootDesc.xml" &&
+              r->server.find("MiniDLNA") != std::string::npos && r->max_age == 120);
+        check("ssdp: uuid from USN, lower-case", sp::uuid_of(r ? r->usn : "") == "4d696e69-444c-164e-9d41-b827eb0a1b2c");
+        check("ssdp: lower-case header names too", sp::parse("HTTP/1.1 200 OK\r\nlocation: http://h/\r\nusn: uuid:abc\r\n\r\n").has_value());
+        const auto bye = sp::parse("NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nNT: upnp:rootdevice\r\n"
+                                   "NTS: ssdp:byebye\r\nUSN: uuid:abc::upnp:rootdevice\r\n\r\n");
+        check("ssdp: byebye needs no location", bye && bye->kind == sp::Reply::Kind::Byebye);
+        check("ssdp: another client's M-SEARCH is not a reply", !sp::parse(sp::search_request()));
+        check("ssdp: no uuid -> ignored", !sp::parse("HTTP/1.1 200 OK\r\nLOCATION: http://h/\r\nUSN: x\r\n\r\n"));
+        const auto u = sp::parse_url("http://192.0.2.20:8200/rootDesc.xml");
+        check("url: host, port, path", u && u->host == "192.0.2.20" && u->port == 8200 && u->path == "/rootDesc.xml");
+        check("url: default port 80", sp::parse_url("http://router.lan")->port == 80);
+        const auto d = sp::parse_description(
+            "<?xml version=\"1.0\"?><root><specVersion><major>1</major></specVersion><device>"
+            "<deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>"
+            "<friendlyName>RASPI: minidlna</friendlyName><manufacturer>Justin Maggard</manufacturer>"
+            "<modelName>Windows Media Connect compatible (MiniDLNA)</modelName>"
+            "<presentationURL>http://192.0.2.20:8200/</presentationURL>"
+            "<deviceList><device><friendlyName>inner</friendlyName></device></deviceList></device></root>");
+        check("description: root friendlyName, not the embedded one", d.friendly_name == "RASPI: minidlna", d.friendly_name);
+        check("description: device type -> label", sp::device_label(d.device_type) == "Media server");
+        check("description: &amp; decoded", sp::parse_description("<device><friendlyName>A &amp; B</friendlyName></device>").friendly_name == "A & B");
+
+        sp::Aggregator ag;
+        const auto t0 = std::chrono::steady_clock::now();
+        bool fetch = false;
+        auto e = ag.reply(*r, t0, &fetch);
+        check("group: first answer -> Seen upnp-<uuid>, fetch the description",
+              e.size() == 1 && e[0].sighting.id == "upnp-4d696e69-444c-164e-9d41-b827eb0a1b2c" && fetch);
+        check("group: address and UPnP port from LOCATION", e.size() == 1 &&
+              e[0].sighting.addresses == std::vector<std::string>{"192.0.2.20"} &&
+              e[0].sighting.services == std::vector<core::Service>{{"upnp", 8200}});
+        check("group: no description yet -> named by its address", e.size() == 1 && e[0].sighting.name == "192.0.2.20",
+              e.empty() ? "" : e[0].sighting.name);
+        auto r2 = *r;
+        r2.usn = "uuid:4D696E69-444C-164E-9D41-B827EB0A1B2C::upnp:rootdevice";
+        check("group: same uuid again -> nothing new, no refetch yet", ag.reply(r2, t0, &fetch).empty() && !fetch);
+        ag.reply(r2, t0 + std::chrono::seconds(31), &fetch);
+        check("group: still no description 30 s on -> fetch again", fetch);
+        e = ag.described("4d696e69-444c-164e-9d41-b827eb0a1b2c", d);
+        check("group: description -> name, model, Web from presentationURL", e.size() == 1 &&
+              e[0].sighting.name == "RASPI: minidlna" &&
+              e[0].sighting.model == "Justin Maggard Windows Media Connect compatible (MiniDLNA)" &&
+              e[0].sighting.services.size() == 2 && e[0].sighting.services[1] == core::Service{"http", 8200});
+        check("group: alive before max-age -> no expiry", ag.expire(t0 + std::chrono::seconds(150)).empty());
+        e = ag.expire(t0 + std::chrono::seconds(152));   // the reply at +31 s carried it to +151
+        check("group: max-age lapsed -> Lost", e.size() == 1 && e[0].kind == core::FeedEvent::Kind::Lost);
+        ag.reply(*r, t0, nullptr);
+        auto b = *bye; b.usn = r->usn;
+        e = ag.reply(b, t0, nullptr);
+        check("group: byebye -> Lost", e.size() == 1 && e[0].kind == core::FeedEvent::Kind::Lost && ag.devices() == 0);
+    }
+    // ── Milestone 13: merging Avahi and SSDP ───────────────────────────────
+    {
+        using K = core::FeedEvent::Kind;
+        nd::Merger m;
+        const core::Sighting raspi{"raspi.local", "RASPI", "", {"192.0.2.20"}, {{"smb", 445}, {"ssh", 22}}};
+        const core::Sighting dlna{"upnp-abc", "RASPI: minidlna", "MiniDLNA", {"192.0.2.20"}, {{"http", 8200}, {"upnp", 8200}}};
+        const core::Sighting router{"upnp-def", "Router", "Router", {"192.0.2.1"}, {{"upnp", 5000}}};
+        auto e = m.take(nd::Merger::From::Ssdp, {K::Seen, dlna, {}});
+        check("merge: UPnP alone -> listed under its own id", e.size() == 1 && e[0].sighting.id == "upnp-abc");
+        e = m.take(nd::Merger::From::Avahi, {K::Seen, raspi, {}});
+        bool lost = false, seen = false;
+        for (const auto& x : e) {
+            lost = lost || (x.kind == K::Merged && x.sighting.id == "upnp-abc");
+            if (x.kind == K::Seen && x.sighting.id == "raspi.local") {
+                seen = x.sighting.services.size() == 4 && x.sighting.model == "MiniDLNA" && x.sighting.name == "RASPI";
+            }
+        }
+        check("merge: same address on Avahi -> folded in (Merged upnp id, Seen raspi with 4 services)", lost && seen && e.size() == 2);
+        e = m.take(nd::Merger::From::Ssdp, {K::Seen, router, {}});
+        check("merge: another address stays its own device", e.size() == 1 && e[0].sighting.id == "upnp-def");
+        e = m.take(nd::Merger::From::Ssdp, {K::Lost, core::Sighting{"upnp-abc", {}, {}, {}, {}}, {}});
+        check("merge: UPnP gone -> raspi back to its own services", e.size() == 1 && e[0].kind == K::Seen &&
+              e[0].sighting == raspi);
+        e = m.take(nd::Merger::From::Avahi, {K::Note, {}, "avahi says hi"});
+        check("merge: notes pass through", e.size() == 1 && e[0].note == "avahi says hi");
     }
 
     std::cout << "-----------------------------------------------\n"

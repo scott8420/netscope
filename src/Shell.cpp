@@ -2,7 +2,7 @@
 #include "AboutWindow.hpp"      // complete type for ~unique_ptr<AboutWindow> in ~Shell()
 #include "ShortcutsDialog.hpp"  // ditto -- same singleton shape, same dtor requirement
 #include "Log.hpp"
-#include "netdiscover/AvahiSource.hpp"
+#include "netdiscover/SsdpSource.hpp"   // NetworkSource: Avahi + SSDP (m13)
 
 #include <cstdlib>
 
@@ -63,10 +63,11 @@ void Shell::build_ui() {
     rebuild_recents_page();
 
     // Start the feed last, once everything it repaints exists. Avahi
-    // (milestone 4); NETSCOPE_FIXTURE=1 brings back the canned devices.
+    // (milestone 4) + SSDP (milestone 13), merged; NETSCOPE_FIXTURE=1 brings
+    // back the canned devices.
     const char* fx = std::getenv("NETSCOPE_FIXTURE");
     if (fx && *fx && std::string(fx) != "0") m_source = std::make_unique<core::FixtureSource>();
-    else                                       m_source = std::make_unique<netdiscover::AvahiSource>();
+    else                                       m_source = std::make_unique<netdiscover::NetworkSource>();
     m_source->start(m_inbox);
 
     if (auto lg = log::get(log::Area::Shell))
