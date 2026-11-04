@@ -1,0 +1,8 @@
+{
+  "uuid": "netscope@scott8420.github.io",
+  "name": "NetScope",
+  "description": "NetScope's Quick Settings tile: your pinned network shares (SMB, AFP) -- mount, unmount, Unmount All. Talks to netscoped over D-Bus; passwords are asked by the NetScope app.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "url": "https://github.com/scott8420/netscope",
+  "version": 1
+}

@@ -116,6 +116,14 @@ void Shell::drain_feed() {  // helper
         const auto rs = core::rows(m_net, m_choices, m_show_hidden);
         if (!rs.empty()) select_device(rs.front().id, false);
     }
+    // A mount the tile asked for before its device was found (mount_share).
+    if (!m_pending_mount.empty() && m_net.get(m_pending_dev)) {
+        const std::string uri = m_pending_mount;
+        m_pending_mount.clear();
+        m_pending_timeout.disconnect();
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("mount {}: {} found, mounting", uri, m_pending_dev);
+        Glib::signal_idle().connect_once([this, uri] { mount_share(uri); });
+    }
 }
 
 // One repaint per idle, AFTER the writes that caused it. A burst of feed
@@ -277,14 +285,16 @@ Glib::RefPtr<Gio::MountOperation> Shell::mount_op() {  // helper
 void Shell::repaint_shares() {  // helper: the selected device's shares + their state
     while (auto* c = m_share_list.get_first_child()) m_share_list.remove(*c);
     const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
-    bool has_smb = false;
+    bool has_shares = false;
     std::string root;
     if (seen) {
         const auto schemes = netmount::schemes_of(seen->sighting);
-        has_smb = std::find(schemes.begin(), schemes.end(), "smb") != schemes.end();
-        root = netmount::root_uri("smb", netmount::host_for(seen->sighting));
+        const bool afp = device_has_afp(seen->sighting);
+        has_shares = afp || std::find(schemes.begin(), schemes.end(), "smb") != schemes.end();
+        root = afp && netafp::available() ? "afp://" + seen->sighting.id + "/"
+                                          : netmount::root_uri("smb", netmount::host_for(seen->sighting));
     }
-    m_shares_button.set_sensitive(has_smb && !m_share_busy.count(root));
+    m_shares_button.set_sensitive(has_shares && !m_share_busy.count(root));
     const auto note = m_share_notes.find(m_sel);
     m_share_said.set_text(note == m_share_notes.end() ? std::string{} : note->second);
 
@@ -301,8 +311,15 @@ void Shell::repaint_shares() {  // helper: the selected device's shares + their 
         return;
     }
     const auto roots = m_mounter->mount_roots();
+    const auto afp_mounts = netafp::mounts();   // milestone 10: FUSE mounts, from the kernel's table
     for (const auto& sh : list) {
-        const bool mounted = netmount::is_mounted(sh.uri, roots);
+        bool mounted = false;
+        if (netafp::is_afp_uri(sh.uri)) {
+            const auto point = afp_point(sh.uri);
+            for (const auto& m : afp_mounts) if (m.point == point) mounted = true;
+        } else {
+            mounted = netmount::is_mounted(sh.uri, roots);
+        }
         const bool busy    = m_share_busy.count(sh.uri) > 0;
         auto row = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
         row->set_margin(6);

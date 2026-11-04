@@ -28,6 +28,7 @@ else
     if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
         systemctl --user disable --now netscoped.service >/dev/null 2>&1 || true
     fi
+    command -v gnome-extensions >/dev/null && gnome-extensions disable netscope@scott8420.github.io >/dev/null 2>&1 || true
     while IFS= read -r p; do
         [[ -z "$p" ]] && continue
         real="$(realpath -m "$p")"
@@ -37,6 +38,8 @@ else
         esac
     done < "$MANIFEST"
     "${SUDO[@]}" rmdir --ignore-fail-on-non-empty "$PREFIX/share/$APP" 2>/dev/null || true
+    EXT="$PREFIX/share/gnome-shell/extensions/netscope@scott8420.github.io"
+    "${SUDO[@]}" rmdir --ignore-fail-on-non-empty "$EXT/icons" "$EXT" 2>/dev/null || true
     ICONS="$PREFIX/share/icons/hicolor"
     command -v gtk-update-icon-cache   >/dev/null && [[ -d "$ICONS" ]] && "${SUDO[@]}" gtk-update-icon-cache -q -t -f "$ICONS" || true
     command -v update-desktop-database >/dev/null && "${SUDO[@]}" update-desktop-database -q "$PREFIX/share/applications" || true

@@ -10,6 +10,11 @@
 // tile then asks the app (org.freedesktop.Application.ActivateAction "mount"),
 // whose GTK dialog can save it. Nothing here ever holds a password.
 //
+// AFP (milestone 11): an afp:// pin is mounted when its FUSE mount point
+// (~/<host>/<volume>, libs/netafp) is in the kernel's mount table. Mount on
+// one that isn't returns "password" -- the app's login dialog does the
+// mounting (no Keyring for AFP yet). Unmount goes through netafp.
+//
 //   bus name   io.github.scott8420.NetScope.Daemon
 //   object     /io/github/scott8420/NetScope/Daemon
 //   interface  io.github.scott8420.NetScope.Daemon1
@@ -22,6 +27,7 @@
 //   PropertiesChanged on every change.
 #include "core/Devices.hpp"
 #include "netmount/Mounter.hpp"
+#include "netafp/Afp.hpp"
 
 #include <giomm.h>
 #include <glibmm.h>
@@ -29,6 +35,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -97,10 +104,25 @@ private:
             for (const auto& p : ch.pins) m_pins.push_back({p.uri, p.name, id});
     }
 
+    static std::string afp_point(const std::string& uri) {
+        std::string host, vol;
+        if (!netafp::split_uri(uri, host, vol)) return {};
+        return netafp::mountpoint_for(Glib::get_home_dir(), host, vol);
+    }
+    // One answer for both kinds: GIO's mounts for smb://, the kernel's table for afp://.
+    bool mounted(const std::string& uri, const std::vector<std::string>& roots,
+                 const std::vector<netafp::Mount>& afp) const {
+        if (!netafp::is_afp_uri(uri)) return netmount::is_mounted(uri, roots);
+        const auto point = afp_point(uri);
+        for (const auto& m : afp) if (m.point == point) return true;
+        return false;
+    }
+
     std::vector<ShareRow> rows() const {
         const auto roots = m_mounter.mount_roots();
+        const auto afp = netafp::mounts();
         std::vector<ShareRow> out;
-        for (const auto& p : m_pins) out.emplace_back(p.uri, p.name, p.device, netmount::is_mounted(p.uri, roots));
+        for (const auto& p : m_pins) out.emplace_back(p.uri, p.name, p.device, mounted(p.uri, roots, afp));
         return out;
     }
     bool any_mounted() const {
@@ -165,25 +187,47 @@ private:
         if (method == "UnmountAll") {
             auto failed = std::make_shared<std::vector<Glib::ustring>>();
             const auto roots = m_mounter.mount_roots();
+            const auto afp = netafp::mounts();
             std::vector<std::string> todo;
-            for (const auto& p : m_pins) if (netmount::is_mounted(p.uri, roots)) todo.push_back(p.uri);
+            for (const auto& p : m_pins) if (mounted(p.uri, roots, afp)) todo.push_back(p.uri);
             if (todo.empty()) {
                 inv->return_value(Glib::VariantContainerBase::create_tuple(Glib::Variant<std::vector<Glib::ustring>>::create({})));
                 return;
             }
             auto left = std::make_shared<std::size_t>(todo.size());
-            for (const auto& uri : todo)
+            for (const auto& uri : todo) {
+                if (netafp::is_afp_uri(uri)) {
+                    unmount_afp(uri, [this, inv, failed, left, uri](const std::string& r) {
+                        if (!r.empty()) failed->push_back(uri);
+                        if (--*left == 0)
+                            inv->return_value(Glib::VariantContainerBase::create_tuple(
+                                Glib::Variant<std::vector<Glib::ustring>>::create(*failed)));
+                    });
+                    continue;
+                }
                 m_mounter.unmount(uri, Gio::MountOperation::create(), [inv, failed, left, uri](const netmount::Outcome& o) {
                     if (!o.ok) failed->push_back(uri);
                     if (--*left == 0)
                         inv->return_value(Glib::VariantContainerBase::create_tuple(
                             Glib::Variant<std::vector<Glib::ustring>>::create(*failed)));
                 });
+            }
             return;
         }
         Glib::Variant<Glib::ustring> arg;
         params.get_child(arg, 0);
         const std::string uri = arg.get();
+        if (method == "Mount" && netafp::is_afp_uri(uri)) {
+            const bool is = netafp::is_mounted(afp_point(uri));
+            std::cout << "netscoped: mount " << uri << ": " << (is ? "already mounted" : "password (the app asks)") << "\n";
+            reply_s(inv, is ? "" : "password");
+            return;
+        }
+        if (method == "Unmount" && netafp::is_afp_uri(uri)) {
+            std::cout << "netscoped: unmount " << uri << "\n";
+            unmount_afp(uri, [inv](const std::string& r) { reply_s(inv, r); });
+            return;
+        }
         if (method == "Mount") {
             auto needs = std::make_shared<bool>(false);
             std::cout << "netscoped: mount " << uri << "\n";
@@ -200,6 +244,21 @@ private:
         } else {
             inv->return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", "No such method: " + method);
         }
+    }
+
+    // netafp::unmount blocks (afp_client / fusermount): a thread, the answer
+    // back on the main loop. "" = unmounted, else the sentence.
+    void unmount_afp(const std::string& uri, std::function<void(const std::string&)> done) {
+        const std::string point = afp_point(uri);
+        std::thread([this, point, uri, done = std::move(done)] {
+            const auto r = netafp::unmount(point);
+            Glib::MainContext::get_default()->invoke([this, r, uri, done] {
+                std::cout << "netscoped: unmount " << uri << ": " << r.says << "\n";
+                done(r.ok ? std::string{} : r.says);
+                changed();
+                return false;
+            });
+        }).detach();
     }
 
     std::string                                   m_file;

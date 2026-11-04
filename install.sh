@@ -58,6 +58,14 @@ put 644 "$(fill "$ID.Daemon.service")"                              "$DBUS/$ID.D
 put 644 "$(fill netscoped.service)"                                 "$UNITS/netscoped.service"
 put 644 "data/$ID.svg"                                              "$ICONS/scalable/apps/$ID.svg"
 put 644 "resources/icons/scalable/apps/$APP-logo-symbolic.svg"      "$ICONS/symbolic/apps/$ID-symbolic.svg"
+# Milestone 11: the Quick Settings tile (a GNOME Shell extension). GNOME looks
+# in ~/.local/share and /usr/local/share alike.
+UUID=netscope@scott8420.github.io
+EXT="$PREFIX/share/gnome-shell/extensions/$UUID"
+for f in metadata.json extension.js stylesheet.css; do
+    put 644 "shell-extension/$UUID/$f"                              "$EXT/$f"
+done
+put 644 "resources/icons/scalable/apps/$APP-logo-symbolic.svg"      "$EXT/icons/$APP-logo-symbolic.svg"
 
 echo "$MANIFEST" >> "$tmp"
 "${SUDO[@]}" install -D -m 644 "$tmp" "$MANIFEST"
@@ -71,5 +79,25 @@ if [[ -z ${SUDO[*]:-} ]] && command -v systemctl >/dev/null && systemctl --user 
     systemctl --user restart netscoped.service && echo "netscoped: running (systemctl --user status netscoped)"
 else
     echo "netscoped: start it with  systemctl --user daemon-reload && systemctl --user enable --now netscoped"
+fi
+# Switch the tile on. A NEW extension is found only at login (Samson s011).
+new_ext=1
+command -v gnome-extensions >/dev/null && gnome-extensions info "$UUID" >/dev/null 2>&1 && new_ext=0
+if command -v gnome-extensions >/dev/null && gnome-extensions enable "$UUID" >/dev/null 2>&1; then
+    echo "tile: enabled"
+elif command -v gsettings >/dev/null && gsettings get org.gnome.shell enabled-extensions >/dev/null 2>&1; then
+    cur=$(gsettings get org.gnome.shell enabled-extensions)
+    if [[ $cur != *"'$UUID'"* ]]; then
+        if [[ $cur == "@as []" || $cur == "[]" ]]; then new="['$UUID']"; else new="${cur%]}, '$UUID']"; fi
+        gsettings set org.gnome.shell enabled-extensions "$new"
+    fi
+    echo "tile: switched on for your next login"
+else
+    echo "tile: installed (turn it on in Extensions)"
+fi
+if [[ $new_ext == 1 ]]; then
+    echo "  -> GNOME finds a NEW extension only at login: log out and back in."
+else
+    echo "  -> a changed tile shows after you log out and back in."
 fi
 echo "Installed to $PREFIX"

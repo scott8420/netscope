@@ -1,0 +1,6 @@
+/* NetScope tile (milestone 11) -- Samson's look. Status text stays the
+   regular colour; a mark in front carries the meaning (dark theme). */
+.netscope-row-name   { font-weight: bold; }
+.netscope-row-sub    { font-size: 0.85em; color: rgba(255,255,255,0.65); }
+.netscope-row-button { padding: 2px 10px; border-radius: 99px; }
+.netscope-status     { font-size: 0.9em; }

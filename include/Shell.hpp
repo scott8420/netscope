@@ -6,6 +6,11 @@
 #include "netdiag/Checks.hpp"   // milestone 5: the checks
 #include "netmount/Mounter.hpp" // milestone 6: shares and mounts through GIO
 #include "netfix/LinkLocal.hpp"  // milestone 9: the Fix button (link-local via NetworkManager)
+#include "netafp/Afp.hpp"        // milestone 10: AFP through Netatalk Client
+
+#include <atomic>
+#include <functional>
+#include <list>
 
 #include <glibmm/dispatcher.h>
 #include <mutex>
@@ -122,6 +127,16 @@ private:
     void update_undo_ui();                        // category: helper: Undo / Redo say what they would do, grey when nothing
     bool focus_is_text() const;                   // category: helper: the keyboard is in a text box (its own Ctrl+Z)
     void repaint_shares();                        // category: helper: the selected device's shares + their state
+    // Milestone 10 -- AFP (Shell_afp.cpp).
+    bool device_has_afp(const core::Sighting& s) const;   // category: helper
+    std::string afp_point(const std::string& uri) const;   // category: helper: ~/tc01/Data for afp://tc01.local/Data/
+    void run_afp(std::function<std::function<void()>()> work);   // category: helper: thread, continuation on the main loop
+    void on_afp_ready();                                   // category: handler: run the continuations
+    void ask_afp_login(const std::string& host, const std::string& why,
+                       std::function<void(const netafp::Login&)> then);   // category: helper: NetScope's login dialog
+    void list_afp_volumes(const core::Sighting& s, const std::string& why = "");   // category: helper
+    void mount_afp(const std::string& uri, const std::string& why = "");          // category: helper
+    void unmount_afp(const std::string& uri);              // category: helper
     Glib::RefPtr<Gio::MountOperation> mount_op(); // category: helper: a GTK password dialog, parented here
 
     // Titlebar: brand logo (start) + hamburger (end).
@@ -211,6 +226,22 @@ private:
     std::map<core::DeviceId, std::vector<netmount::Share>> m_shares;
     std::map<core::DeviceId, std::string>                  m_share_notes;
     std::set<std::string>                                   m_share_busy;   // URIs (and roots) in flight
+
+    // AFP (milestone 10). Logins live for this run only (no Keyring yet).
+    // Each blocking job has its own thread; its continuation comes back
+    // through m_afp_ready. Jobs are declared after the dispatcher and the
+    // queue, so ~Shell joins them first (bounded: 90 s per mount at most).
+    std::map<std::string, netafp::Login>  m_afp_logins;   // by host ("tc01.local")
+    std::map<std::string, std::string>    m_afp_users;
+    // app.mount before discovery found the device (mount_share / drain_feed).
+    std::string                           m_pending_mount, m_pending_dev;
+    sigc::connection                      m_pending_timeout;    // last user name typed, by host (kept after a refusal)
+    std::unique_ptr<Gtk::Window>          m_afp_dialog;
+    Glib::Dispatcher                      m_afp_ready;
+    std::mutex                            m_afp_mu;
+    std::vector<std::function<void()>>    m_afp_then;     // guarded by m_afp_mu
+    struct AfpJob { std::jthread thread; std::shared_ptr<std::atomic<bool>> done; };
+    std::list<AfpJob>                     m_afp_jobs;
 };
 
 }  // namespace netscope

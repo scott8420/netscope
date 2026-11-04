@@ -9,6 +9,7 @@
 #include <giomm/asyncresult.h>
 #include <giomm/file.h>
 
+#include <glibmm/convert.h>
 #include <filesystem>
 #include <glibmm/markup.h>
 #include <giomm/appinfo.h>
@@ -208,13 +209,20 @@ void Shell::on_show_hidden() {  // handler: a view setting -- not a step
 // answers repaint. The password dialog is GTK's own: "Remember forever" puts
 // the password in GNOME Keyring through gvfs, and gvfs finds it there next time.
 
-void Shell::on_device_shares() {  // handler: list the selected device's SMB shares
+void Shell::on_device_shares() {  // handler: list the selected device's shares (AFP first, else SMB)
     const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
     if (!seen || !m_mounter) return;
     const auto& s = seen->sighting;
     const auto schemes = netmount::schemes_of(s);
-    if (std::find(schemes.begin(), schemes.end(), "smb") == schemes.end()) {
-        m_share_notes[s.id] = "No SMB here. (AFP comes with milestone 7; SFTP and NFS with 10.)";
+    const bool smb = std::find(schemes.begin(), schemes.end(), "smb") != schemes.end();
+    // Milestone 10: a device that speaks AFP is asked over AFP -- the Time
+    // Capsule's SMB is SMB1, which current systems refuse.
+    if (device_has_afp(s)) {
+        if (netafp::available()) { list_afp_volumes(s); return; }
+        if (!smb) { m_share_notes[s.id] = netafp::missing(); repaint_shares(); return; }
+    }
+    if (!smb) {
+        m_share_notes[s.id] = "No AFP or SMB here. (SFTP and NFS come with a later milestone.)";
         repaint_shares();
         return;
     }
@@ -243,6 +251,7 @@ void Shell::on_device_shares() {  // handler: list the selected device's SMB sha
 }
 
 void Shell::on_share_mount(const std::string& uri) {  // handler: mount one share
+    if (netafp::is_afp_uri(uri)) { mount_afp(uri); return; }   // milestone 10
     if (!m_mounter || m_share_busy.count(uri)) return;
     m_share_busy.insert(uri);
     const std::string id = m_sel;
@@ -258,6 +267,7 @@ void Shell::on_share_mount(const std::string& uri) {  // handler: mount one shar
 }
 
 void Shell::on_share_unmount(const std::string& uri) {  // handler: unmount it
+    if (netafp::is_afp_uri(uri)) { unmount_afp(uri); return; }   // milestone 10
     if (!m_mounter || m_share_busy.count(uri)) return;
     m_share_busy.insert(uri);
     const std::string id = m_sel;
@@ -273,8 +283,30 @@ void Shell::on_share_unmount(const std::string& uri) {  // handler: unmount it
 }
 
 void Shell::mount_share(const std::string& uri) {  // handler: app.mount from the tile
+    // The tile can start NetScope just to ask for a password: then discovery
+    // hasn't found the device yet. Hold the request until it shows up
+    // (drain_feed), or say so after 20 s -- never drop it silently.
+    std::string dev;
     for (const auto& [id, c] : m_choices.all())
-        if (core::devices::is_pinned(m_choices, id, uri) && m_net.get(id)) { m_sel = id; select_device(id, false); break; }
+        if (core::devices::is_pinned(m_choices, id, uri)) { dev = id; break; }
+    if (!dev.empty() && !m_net.get(dev)) {
+        m_pending_mount = uri;
+        m_pending_dev = dev;
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("mount {}: waiting for {} to be found", uri, dev);
+        m_pending_timeout.disconnect();
+        m_pending_timeout = Glib::signal_timeout().connect_seconds([this, dev] {
+            if (m_pending_mount.empty()) return false;
+            if (auto lg = log::get(log::Area::Mounts)) lg->warn("mount {}: {} not found", m_pending_mount, dev);
+            m_share_notes[m_sel] = netafp::short_host(dev) + " hasn't shown up on the network, so " +
+                                   "NetScope can't mount it yet. Is it awake?";
+            m_pending_mount.clear();
+            m_pending_dev.clear();
+            repaint_shares();
+            return false;
+        }, 20);
+        return;
+    }
+    if (!dev.empty()) { m_sel = dev; select_device(dev, false); }
     on_share_mount(uri);
 }
 
@@ -285,7 +317,9 @@ void Shell::on_share_pin(const netmount::Share& share, bool on) {  // handler: p
 
 void Shell::on_share_open(const std::string& uri) {  // handler: open it in the file manager
     try {
-        Gio::AppInfo::launch_default_for_uri(uri);
+        // AFP: the FUSE mount point, not the afp:// URI (GVfs's AFP is the path that fails).
+        const std::string where = netafp::is_afp_uri(uri) ? std::string(Glib::filename_to_uri(afp_point(uri))) : uri;
+        Gio::AppInfo::launch_default_for_uri(where);
         if (auto lg = log::get(log::Area::Mounts)) lg->info("open {}", uri);
     } catch (const Glib::Error& e) {
         m_share_notes[m_sel] = "Couldn't open it: " + std::string(e.what());
