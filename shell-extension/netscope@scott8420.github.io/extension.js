@@ -4,7 +4,8 @@
 // The switch is lit while any pinned share is mounted. Switching it off
 // unmounts them all; switching it on mounts the pinned shares. A share that
 // needs a password goes to the NetScope app (its own dialog) -- a password is
-// never typed into the Shell. Unmount / Unmount All go to netscoped.
+// never typed into the Shell. Milestone 12: an AFP share whose password is in
+// Keyring is mounted by netscoped itself; the row says "mounting…" meanwhile. Unmount / Unmount All go to netscoped.
 //
 //   netscoped  io.github.scott8420.NetScope.Daemon  /io/github/scott8420/NetScope/Daemon
 //              (Shares, AnyMounted, Mount, Unmount, UnmountAll, Refresh -- daemon/netscoped.cpp)
@@ -89,6 +90,7 @@ class ShareItem extends PopupMenu.PopupBaseMenuItem {
     _init(share, tile) {
         super._init({style_class: 'netscope-row'});
         const [uri, name, device, mounted] = share;
+        const busy = tile.isBusy(uri);
         this._uri = uri;
         this._name = name;
         this._tile = tile;
@@ -102,7 +104,8 @@ class ShareItem extends PopupMenu.PopupBaseMenuItem {
         text.add_child(new St.Label({text: name, style_class: 'netscope-row-name'}));
         const kind = uri.startsWith('afp://') ? 'AFP' : uri.startsWith('smb://') ? 'SMB' : '';
         text.add_child(new St.Label({
-            text: (mounted ? MARK_OK + 'mounted · ' : '') + `on ${shortHost(device)}` + (kind ? ` · ${kind}` : ''),
+            text: (busy ? 'mounting… · ' : mounted ? MARK_OK + 'mounted · ' : '') +
+                `on ${shortHost(device)}` + (kind ? ` · ${kind}` : ''),
             style_class: 'netscope-row-sub',
         }));
         this.add_child(text);
@@ -111,13 +114,16 @@ class ShareItem extends PopupMenu.PopupBaseMenuItem {
             label: mounted ? 'Unmount' : 'Mount',
             style_class: 'button netscope-row-button',
             y_align: Clutter.ActorAlign.CENTER,
+            reactive: !busy,
         });
+        this._busy = busy;
         btn.connect('clicked', () => this._act());
         this.add_child(btn);
         this.connect('activate', () => this._act());
     }
 
     _act() {
+        if (this._busy) return;
         if (this._mounted) this._tile.unmount(this._uri, this._name);
         else this._tile.mount(this._uri, this._name);
         this._tile.menu.close();
@@ -132,6 +138,7 @@ class NetScopeToggle extends QuickMenuToggle {
         this._ext = ext;
         this._proxy = null;
         this._shares = [];
+        this._busy = new Set();   // URIs being mounted (AFP takes ~15 s)
 
         this.menu.setHeader(this._gicon, 'NetScope', '');
         this._shareSection = new PopupMenu.PopupMenuSection();
@@ -155,11 +162,17 @@ class NetScopeToggle extends QuickMenuToggle {
                 return;
             }
             this._proxy = proxy;
+            // An AFP mount from Keyring takes ~15 s cold, up to 90: don't time out at 25.
+            proxy.set_default_timeout(120000);
             this._propsId = proxy.connect('g-properties-changed', () => this._sync());
             this._ownerId = proxy.connect('notify::g-name-owner', () => this._sync());
             this._sync();
         }, null, Gio.DBusProxyFlags.NONE);
         this._sync();
+    }
+
+    isBusy(uri) {
+        return this._busy.has(uri);
     }
 
     _up() {
@@ -185,7 +198,8 @@ class NetScopeToggle extends QuickMenuToggle {
             this._statusItem.label.text = 'Pin a share in NetScope (Devices → Shares → Pin)';
         } else {
             const on = shares.filter(s => s[3]);
-            subtitle = on.length === 1 ? `${on[0][1]} mounted` : on.length > 1 ? `${on.length} mounted` : 'Nothing mounted';
+            const busy = shares.filter(s => this._busy.has(s[0]));
+            subtitle = busy.length > 0 ? `Mounting ${busy[0][1]}…` : on.length === 1 ? `${on[0][1]} mounted` : on.length > 1 ? `${on.length} mounted` : 'Nothing mounted';
             this._statusItem.visible = false;
         }
         this.subtitle = subtitle;
@@ -219,8 +233,12 @@ class NetScopeToggle extends QuickMenuToggle {
     }
 
     _mount(uri, name, then) {
-        if (!this._proxy) return;
+        if (!this._proxy || this._busy.has(uri)) return;
+        this._busy.add(uri);
+        this._sync();
         this._proxy.MountRemote(uri, (result, error) => {
+            this._busy.delete(uri);
+            this._sync();
             if (error) {
                 Main.notifyError('NetScope', `Couldn't mount ${name}: ${error.message}`);
                 then?.(false);

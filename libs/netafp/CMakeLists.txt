@@ -10,8 +10,20 @@ endforeach()
 set(ENV{PKG_CONFIG_PATH} "$ENV{PKG_CONFIG_PATH}:${_afp_pc}")
 pkg_check_modules(AFPSL QUIET IMPORTED_TARGET libafpsl libafpclient)
 
-add_library(netafp STATIC src/Afp.cpp)
+add_library(netafp STATIC src/Afp.cpp src/Keyring.cpp)
 target_include_directories(netafp PUBLIC include)
+
+# Milestone 12: AFP passwords in GNOME Keyring. Optional: without libsecret the
+# app keeps the password until it quits. (Fedora: libsecret-devel.)
+pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
+if(LIBSECRET_FOUND)
+    message(STATUS "netafp: libsecret ${LIBSECRET_VERSION} found -- AFP passwords in Keyring")
+    target_compile_definitions(netafp PRIVATE NETAFP_HAVE_LIBSECRET=1)
+    target_link_libraries(netafp PRIVATE PkgConfig::LIBSECRET)
+else()
+    message(WARNING "netafp: libsecret not found -- AFP passwords won't go to Keyring "
+                    "(the tile will open the app for them). Fedora: sudo dnf install libsecret-devel")
+endif()
 if(AFPSL_FOUND)
     message(STATUS "netafp: Netatalk Client found (libafpsl ${AFPSL_libafpsl_VERSION}) -- AFP on")
     target_compile_definitions(netafp PRIVATE NETAFP_HAVE_AFPSL=1)

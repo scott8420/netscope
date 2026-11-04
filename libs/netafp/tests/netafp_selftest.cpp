@@ -1,5 +1,6 @@
 // netafp_selftest -- AFP volumes as URIs and mount points, headless.
 #include "netafp/Afp.hpp"
+#include "netafp/Keyring.hpp"
 
 #include <iostream>
 
@@ -44,6 +45,11 @@ int main() {
     check("mountinfo: point and source", ms.size() > 0 && ms[0].point == "/home/scott/tc01/Data" && ms[0].source == "scott@tc01:Data");
     check("mountinfo: \\040 decoded", ms.size() > 1 && ms[1].point == "/home/scott/tc01/Time Machine", ms.size() > 1 ? ms[1].point : "");
     check("mountinfo: empty text", na::parse_mountinfo("").empty());
+
+    check("keyring label: user, short host", na::keyring::label("tc01.local", "scott") == "scott on tc01 (AFP, NetScope)",
+          na::keyring::label("tc01.local", "scott"));
+    check("keyring label: guest", na::keyring::label("tc01.local", "") == "guest on tc01 (AFP, NetScope)");
+    check("keyring: saving a guest login keeps nothing", na::keyring::save("tc01.local", "", "x").empty() || !na::keyring::available());
 
     check("available() and missing() agree", na::available() == na::missing().empty(), na::missing());
 

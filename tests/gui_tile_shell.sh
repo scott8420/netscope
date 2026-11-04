@@ -81,6 +81,18 @@ echo "$r" | grep -q "pub mounted|true" && ok "mounted again: switch lit" || bad 
 E "$Q qs.menu.open(); t.menu.open(); true" >/dev/null; sleep 1.2; shot 03-tile-menu-mounted
 E "$Q t.emit(\"clicked\", null); true" >/dev/null; sleep 0.8
 grep -q "^UnmountAll" "$log" && ok "switch off -> UnmountAll" || bad "switch off -> UnmountAll"
+# Milestone 12: the password for Data in Keyring -> netscoped mounts it, slowly; the row says so.
+gdbus call --session -d io.github.scott8420.NetScope.Daemon -o /io/github/scott8420/NetScope/Daemon -m io.github.scott8420.NetScope.Daemon1.TestKeyring >/dev/null
+asks=$(grep -c "^ActivateAction mount" "$log")
+E "$Q t.menu.open(); t._shareSection.box.get_children()[0]._act(); true" >/dev/null; sleep 1
+r=$(E "$Q [t.subtitle, (function w(a) { return [a.text].concat(...a.get_children().map(w)); })(t._shareSection.box.get_children()[0]).filter(x => typeof x === \"string\").join(\"/\")].join(\"|\")")
+echo "$r" | grep -qE "Mounting Data.?\|.*mounting.? . on tc01 . AFP" && ok "Keyring mount under way: \"Mounting Data…\", row \"mounting…\"" || bad "busy state: $r"
+E "$Q qs.menu.open(); t.menu.open(); true" >/dev/null; sleep 0.8; shot 05-mounting
+sleep 3
+r=$(E "$Q [t.subtitle, t.checked].join(\"|\")")
+echo "$r" | grep -q "Data mounted|true" && ok "after 3 s: \"Data mounted\", switch lit" || bad "after keyring mount: $r"
+[[ $(grep -c "^ActivateAction mount" "$log") -eq $asks ]] && ok "no app window for a Keyring mount" || bad "the app was asked"
+E "$Q t.emit(\"clicked\", null); true" >/dev/null; sleep 0.8
 E "$Q t.menu.open(); const it = t.menu._getMenuItems().find(i => i.label && i.label.text === \"Open NetScope\"); it.activate(null); true" >/dev/null; sleep 0.5
 grep -q "^ActivateAction devices" "$log" && ok "Open NetScope -> app.devices" || bad "Open NetScope action"
 kill $mock; sleep 1.5

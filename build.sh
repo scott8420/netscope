@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # NetScope build.
-# Deps (Fedora): gtkmm4.0-devel spdlog-devel cmake gcc-c++ glib2-devel
-# Deps (Ubuntu): libgtkmm-4.0-dev libspdlog-dev cmake g++
+# Deps (Fedora): gtkmm4.0-devel spdlog-devel cmake gcc-c++ glib2-devel libsecret-devel
+# Deps (Ubuntu): libgtkmm-4.0-dev libspdlog-dev cmake g++ libsecret-1-dev
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 GEN=()

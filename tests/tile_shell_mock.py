@@ -3,6 +3,8 @@
 # Samson's s011 harness). Logs each call to $1.
 # Pins: Data on tc01 (AFP, not mounted -> Mount says "password") and pub on
 # raspi (SMB, mounted). Mount on SMB mounts; Unmount / UnmountAll unmount.
+# TestKeyring() (the harness only, milestone 12): from then on an AFP Mount
+# takes 3 s and mounts, as netscoped does with a password in Keyring.
 import sys
 import dbus, dbus.service, dbus.mainloop.glib
 from gi.repository import GLib
@@ -16,6 +18,7 @@ class Daemon(dbus.service.Object):
         super().__init__(bus, "/io/github/scott8420/NetScope/Daemon")
         self.shares = [["afp://tc01.local/Data/", "Data", "tc01.local", False],
                        ["smb://raspi.local/pub/", "pub", "raspi.local", True]]
+        self.keyring = False
     def props(self):
         return {"Shares": dbus.Array([dbus.Struct((u, n, d, dbus.Boolean(m))) for u, n, d, m in self.shares],
                                      signature="(sssb)"),
@@ -30,11 +33,17 @@ class Daemon(dbus.service.Object):
         for s in self.shares:
             if s[0] == uri: s[3] = on
         self.PropertiesChanged(IF, self.props(), dbus.Array([], signature="s"))
-    @dbus.service.method(IF, in_signature="s", out_signature="s")
-    def Mount(self, uri):
+    @dbus.service.method(IF, in_signature="s", out_signature="s", async_callbacks=("ok", "err"))
+    def Mount(self, uri, ok, err):
         log("Mount " + uri)
-        if uri.startswith("afp://"): return "password"
-        self.set(uri, True); return ""
+        if uri.startswith("afp://"):
+            if not self.keyring: ok("password"); return
+            def later():
+                self.set(uri, True); log("Mounted " + uri); ok(""); return False
+            GLib.timeout_add(3000, later); return
+        self.set(uri, True); ok("")
+    @dbus.service.method(IF)
+    def TestKeyring(self): self.keyring = True; log("TestKeyring")
     @dbus.service.method(IF, in_signature="s", out_signature="s")
     def Unmount(self, uri):
         log("Unmount " + uri); self.set(uri, False); return ""

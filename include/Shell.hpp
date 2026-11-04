@@ -134,6 +134,11 @@ private:
     void on_afp_ready();                                   // category: handler: run the continuations
     void ask_afp_login(const std::string& host, const std::string& why,
                        std::function<void(const netafp::Login&)> then);   // category: helper: NetScope's login dialog
+    // Milestone 12: memory, then Keyring, then the dialog. `why` non-empty = the
+    // last try was turned down: straight to the dialog, saying so.
+    void with_afp_login(const std::string& host, const std::string& why,
+                        std::function<void(const netafp::Login&)> then);  // category: helper
+    void afp_login_worked(const std::string& host, const netafp::Login& login);   // category: helper: Keyring save / forget
     void list_afp_volumes(const core::Sighting& s, const std::string& why = "");   // category: helper
     void mount_afp(const std::string& uri, const std::string& why = "");          // category: helper
     void unmount_afp(const std::string& uri);              // category: helper
@@ -233,6 +238,8 @@ private:
     // queue, so ~Shell joins them first (bounded: 90 s per mount at most).
     std::map<std::string, netafp::Login>  m_afp_logins;   // by host ("tc01.local")
     std::map<std::string, std::string>    m_afp_users;
+    std::map<std::string, bool>           m_afp_remember; // by host: the dialog's choice, applied on success
+    std::set<std::string>                 m_afp_from_keyring;   // hosts whose login came from Keyring
     // app.mount before discovery found the device (mount_share / drain_feed).
     std::string                           m_pending_mount, m_pending_dev;
     sigc::connection                      m_pending_timeout;    // last user name typed, by host (kept after a refusal)

@@ -11,9 +11,14 @@
 // whose GTK dialog can save it. Nothing here ever holds a password.
 //
 // AFP (milestone 11): an afp:// pin is mounted when its FUSE mount point
-// (~/<host>/<volume>, libs/netafp) is in the kernel's mount table. Mount on
-// one that isn't returns "password" -- the app's login dialog does the
-// mounting (no Keyring for AFP yet). Unmount goes through netafp.
+// (~/<host>/<volume>, libs/netafp) is in the kernel's mount table. Unmount
+// goes through netafp.
+//
+// AFP Mount (milestone 12): the login comes from GNOME Keyring (the app's
+// "Remember the password in Keyring"); the host is resolved through Avahi
+// (tc01.local -> 169.254.192.51, its IPv4 address, as the app connects), and
+// netafp mounts on a thread. No saved login, or the saved one is turned down:
+// "password", and the tile opens the app. Takes ~15 s cold: the tile waits.
 //
 //   bus name   io.github.scott8420.NetScope.Daemon
 //   object     /io/github/scott8420/NetScope/Daemon
@@ -28,6 +33,7 @@
 #include "core/Devices.hpp"
 #include "netmount/Mounter.hpp"
 #include "netafp/Afp.hpp"
+#include "netafp/Keyring.hpp"
 
 #include <giomm.h>
 #include <glibmm.h>
@@ -35,6 +41,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -218,9 +225,7 @@ private:
         params.get_child(arg, 0);
         const std::string uri = arg.get();
         if (method == "Mount" && netafp::is_afp_uri(uri)) {
-            const bool is = netafp::is_mounted(afp_point(uri));
-            std::cout << "netscoped: mount " << uri << ": " << (is ? "already mounted" : "password (the app asks)") << "\n";
-            reply_s(inv, is ? "" : "password");
+            mount_afp(uri, [inv](const std::string& r) { reply_s(inv, r); });
             return;
         }
         if (method == "Unmount" && netafp::is_afp_uri(uri)) {
@@ -246,6 +251,77 @@ private:
         }
     }
 
+    // tc01.local -> its IPv4 address. Avahi first (what discovery uses; works
+    // without nss-mdns), then the system resolver, else the name itself.
+    // Blocking: called on a worker thread.
+    static std::string resolve(const std::string& host) {
+        try {
+            auto bus = Gio::DBus::Connection::get_sync(Gio::DBus::BusType::SYSTEM);
+            auto args = Glib::VariantContainerBase::create_tuple({
+                Glib::Variant<gint32>::create(-1), Glib::Variant<gint32>::create(0),   // any interface, IPv4
+                Glib::Variant<Glib::ustring>::create(host),
+                Glib::Variant<gint32>::create(0), Glib::Variant<guint32>::create(0)});
+            auto r = bus->call_sync("/", "org.freedesktop.Avahi.Server", "ResolveHostName", args,
+                                    "org.freedesktop.Avahi", 5000);
+            Glib::Variant<Glib::ustring> addr;
+            r.get_child(addr, 4);
+            if (!addr.get().empty()) return addr.get();
+        } catch (const Glib::Error& e) {
+            std::cerr << "netscoped: avahi can't resolve " << host << ": " << e.what() << "\n";
+        }
+        try {
+            for (const auto& a : Gio::Resolver::get_default()->lookup_by_name(host))
+                if (a->get_family() == Gio::SocketFamily::IPV4) return a->to_string();
+        } catch (const Glib::Error& e) {
+            std::cerr << "netscoped: can't resolve " << host << ": " << e.what() << "\n";
+        }
+        return host;
+    }
+
+    // "" mounted (or already was) | "password" (no saved login / refused) | the sentence.
+    void mount_afp(const std::string& uri, std::function<void(const std::string&)> done) {
+        const std::string point = afp_point(uri);
+        if (netafp::is_mounted(point)) {
+            std::cout << "netscoped: mount " << uri << ": already mounted\n";
+            done("");
+            return;
+        }
+        if (!netafp::keyring::available() || !netafp::available()) {
+            std::cout << "netscoped: mount " << uri << ": password (no Keyring or AFP here; the app asks)\n";
+            done("password");
+            return;
+        }
+        if (m_afp_busy.count(uri)) { done("Already mounting -- give it a few seconds."); return; }
+        m_afp_busy.insert(uri);
+        std::string host, vol;
+        netafp::split_uri(uri, host, vol);
+        std::cout << "netscoped: mount " << uri << ": looking in Keyring\n";
+        std::thread([this, uri, host, vol, point, done = std::move(done)] {
+            std::string r;
+            const auto saved = netafp::keyring::find(host);
+            if (!saved.found) {
+                r = "password";
+                std::cout << "netscoped: mount " << uri << ": "
+                          << (saved.says.empty() ? "nothing saved" : saved.says) << " -> password\n";
+            } else {
+                netafp::Login login;
+                login.user = saved.user;
+                login.password = saved.password;
+                login.address = resolve(host);
+                std::cout << "netscoped: mount " << uri << ": " << saved.user << " at " << login.address << "\n";
+                const auto m = netafp::mount(login, vol, point);
+                r = m.ok ? "" : m.denied ? "password" : m.says;
+                std::cout << "netscoped: mount " << uri << ": " << (m.ok ? "ok" : m.says) << "\n";
+            }
+            Glib::MainContext::get_default()->invoke([this, r, uri, done] {
+                m_afp_busy.erase(uri);
+                done(r);
+                changed();
+                return false;
+            });
+        }).detach();
+    }
+
     // netafp::unmount blocks (afp_client / fusermount): a thread, the answer
     // back on the main loop. "" = unmounted, else the sentence.
     void unmount_afp(const std::string& uri, std::function<void(const std::string&)> done) {
@@ -263,6 +339,7 @@ private:
 
     std::string                                   m_file;
     std::vector<Pinned>                           m_pins;
+    std::set<std::string>                         m_afp_busy;   // AFP mounts under way
     netmount::Mounter                             m_mounter;
     Glib::RefPtr<Gio::FileMonitor>                m_watch;
     Glib::RefPtr<Gio::DBus::NodeInfo>             m_node;
