@@ -4,12 +4,14 @@
 //   netmount_probe mount   smb://raspi.local/Public/
 //   netmount_probe unmount smb://raspi.local/Public/
 //   netmount_probe mounts
+//   netmount_probe exports 192.168.1.30     (milestone 14: an NFS server's exports)
 //
 // Passwords: anonymous when the server allows it; otherwise it asks on the
 // terminal (NETMOUNT_USER sets the user name; NETMOUNT_PASS skips the prompt
 // for scripts; NETMOUNT_DEBUG=1 prints what the server asked for). The probe never saves a
 // password -- the app's dialog is where "Remember forever" lives.
 #include "netmount/Mounter.hpp"
+#include "netmount/Nfs.hpp"
 
 #include <giomm/init.h>
 #include <glibmm/main.h>
@@ -22,8 +24,19 @@ int main(int argc, char** argv) {
     Gio::init();
     const std::string verb = argc > 1 ? argv[1] : "";
     const std::string uri  = argc > 2 ? argv[2] : "";
+    if (verb == "exports" && !uri.empty()) {
+        const auto l = netscope::netmount::nfs::list_exports(uri, uri);
+        if (!l.ok) { std::cout << l.says << "\n"; return 1; }
+        for (const auto& e : l.exports) {
+            std::cout << e.path << "  ->  " << netscope::netmount::nfs::export_uri(uri, e.path);
+            for (const auto& g : e.groups) std::cout << "  [" << g << "]";
+            std::cout << "\n";
+        }
+        std::cout << l.exports.size() << " export(s)\n";
+        return 0;
+    }
     if (verb != "mounts" && (uri.empty() || (verb != "list" && verb != "mount" && verb != "unmount"))) {
-        std::cerr << "usage: netmount_probe list|mount|unmount <uri>   |   netmount_probe mounts\n";
+        std::cerr << "usage: netmount_probe list|mount|unmount <uri>   |   netmount_probe mounts   |   netmount_probe exports <address>\n";
         return 2;
     }
     auto loop = Glib::MainLoop::create();
@@ -66,7 +79,7 @@ int main(int argc, char** argv) {
         loop->quit();
     };
     if (verb == "mounts") {
-        for (const auto& r : m.mount_roots()) std::cout << r << "\n";
+        for (const auto& r : m.mount_roots()) std::cout << r << "   (Open -> " << m.open_location(r) << ")\n";
         return 0;
     }
     if (verb == "list") {

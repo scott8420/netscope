@@ -53,6 +53,16 @@ std::vector<std::string> Mounter::mount_roots() const {
     return out;
 }
 
+std::string Mounter::open_location(const std::string& uri) const {
+    const auto want = normal(uri);
+    for (const auto& m : m_monitor->get_mounts()) {
+        const auto root = m->get_root();
+        if (!root || normal(root->get_uri()) != want) continue;
+        if (const auto def = m->get_default_location()) return def->get_uri();
+    }
+    return uri;
+}
+
 void Mounter::list_shares(const std::string& root, const Glib::RefPtr<Gio::MountOperation>& op, Listed done) {
     enumerate(root, op, std::move(done), true);
 }

@@ -172,9 +172,16 @@ void Shell::build_devices_page() {  // zone: the Devices page
     // Milestone 6 -- shares: a button, the rows, a line for what happened.
     auto shares = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
     m_shares_button.set_label("Shares");
-    m_shares_button.set_tooltip_text("List this device's SMB shares; mount them so they show in Files");
+    m_shares_button.set_tooltip_text("List this device's shares (AFP, SMB, SFTP, NFS); mount them so they show in Files");
     m_shares_button.set_action_name("win.device-shares");
     shares->append(m_shares_button);
+    // Milestone 15: the device's own web page, and ssh.
+    m_web_button.set_label("Web page");
+    m_web_button.set_action_name("win.device-web");
+    shares->append(m_web_button);
+    m_ssh_button.set_label("Terminal");
+    m_ssh_button.set_action_name("win.device-ssh");
+    shares->append(m_ssh_button);
     m_share_said.set_xalign(0.0f);
     m_share_said.set_hexpand(true);
     m_share_said.set_wrap(true);

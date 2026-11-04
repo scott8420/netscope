@@ -1,4 +1,5 @@
 #include "Shell.hpp"
+#include "core/Launch.hpp"
 #include "core/Recents.hpp"
 #include "Log.hpp"
 
@@ -211,7 +212,7 @@ void Shell::repaint_devices() {  // helper
         const auto& s = seen->sighting;
         std::vector<std::string> svcs;
         for (const auto& v : s.services) {
-            const auto l = core::service_label(v.kind);
+            const auto l = core::service_detail(v.kind);
             if (!l.empty()) svcs.push_back(l + " " + std::to_string(v.port));
         }
         m_device_facts.set_markup(
@@ -282,19 +283,29 @@ Glib::RefPtr<Gio::MountOperation> Shell::mount_op() {  // helper
     return Glib::wrap(op, false);
 }
 
+std::string Shell::shares_key(const core::Sighting& s) const {  // helper
+    if (device_has_afp(s) && netafp::available()) return "afp://" + s.id + "/";
+    return "shares:" + s.id;   // one press gathers SMB, SFTP and NFS
+}
+
 void Shell::repaint_shares() {  // helper: the selected device's shares + their state
     while (auto* c = m_share_list.get_first_child()) m_share_list.remove(*c);
     const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
     bool has_shares = false;
     std::string root;
     if (seen) {
-        const auto schemes = netmount::schemes_of(seen->sighting);
-        const bool afp = device_has_afp(seen->sighting);
-        has_shares = afp || std::find(schemes.begin(), schemes.end(), "smb") != schemes.end();
-        root = afp && netafp::available() ? "afp://" + seen->sighting.id + "/"
-                                          : netmount::root_uri("smb", netmount::host_for(seen->sighting));
+        has_shares = device_has_afp(seen->sighting) || !netmount::schemes_of(seen->sighting).empty();
+        root = shares_key(seen->sighting);
     }
     m_shares_button.set_sensitive(has_shares && !m_share_busy.count(root));
+    // Milestone 15: what the buttons would open, said in their tooltips.
+    const auto url = seen ? core::launch::web_url(seen->sighting) : std::string{};
+    const auto ssh = seen ? core::launch::ssh_args(seen->sighting) : std::vector<std::string>{};
+    m_web_button.set_sensitive(!url.empty());
+    m_web_button.set_tooltip_text(url.empty() ? "This device advertises no web page" : "Open " + url + " in your browser");
+    m_ssh_button.set_sensitive(!ssh.empty());
+    m_ssh_button.set_tooltip_text(ssh.empty() ? "This device advertises no ssh"
+                                              : "ssh " + join(ssh, " ") + " in a terminal");
     const auto note = m_share_notes.find(m_sel);
     m_share_said.set_text(note == m_share_notes.end() ? std::string{} : note->second);
 

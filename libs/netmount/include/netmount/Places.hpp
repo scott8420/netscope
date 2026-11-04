@@ -24,12 +24,16 @@ struct Share {
 std::string scheme_for(const std::string& kind);
 
 // The schemes this device can be browsed by, in a fixed order (smb first).
+// ssh counts as sftp (milestone 14).
 std::vector<std::string> schemes_of(const core::Sighting& s);
 
 std::string host_for(const core::Sighting& s);
 std::string root_uri(const std::string& scheme, const std::string& host);         // "smb://raspi.local/"
 std::string share_uri(const std::string& scheme, const std::string& host,
                       const std::string& share);                                   // percent-escaped name
+
+// An SFTP server is one share: the server itself ("sftp://raspi.local/").
+Share sftp_share(const std::string& host);
 
 // Shares a person never mounts: "IPC$", "print$", "ADMIN$".
 bool is_admin_share(const std::string& name);

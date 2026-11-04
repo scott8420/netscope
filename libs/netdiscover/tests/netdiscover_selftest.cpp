@@ -28,7 +28,7 @@ int main() {
     using K = core::FeedEvent::Kind;
 
     check("types: AFP maps to afp", nd::kind_for_type("_afpovertcp._tcp") == "afp");
-    check("types: unknown maps to nothing", nd::kind_for_type("_printer._tcp").empty());
+    check("types: unknown maps to nothing", nd::kind_for_type("_apple-mobdev2._tcp").empty());
     check("id: lower-case, no trailing dot", nd::device_id("TC01.local.") == "tc01.local");
 
     {
@@ -186,8 +186,56 @@ int main() {
             one = one || (x.kind == K::Seen && x.sighting.id == "upnp-def" && x.sighting.services.size() == 2);
         }
         check("merge: two UPnP uuids at one address -> one row (lowest id)", (merged2 || e.size() == 1) && one);
+        {
+            // s006: Scott's 19:56 router -- the lowest uuid not yet described is
+            // named by its address; it keeps the described sibling's name.
+            nd::Merger m2;
+            const core::Sighting named{"upnp-bbb", "ZYXEL EMG6726-B10A", "ZYXEL EMG6726-B10A", {"192.168.1.1"}, {{"upnp", 1991}}};
+            const core::Sighting bare{"upnp-aaa", "192.168.1.1", "", {"192.168.1.1"}, {{"upnp", 1992}}};
+            m2.take(nd::Merger::From::Ssdp, {K::Seen, named, {}});
+            auto e2 = m2.take(nd::Merger::From::Ssdp, {K::Seen, bare, {}});
+            bool kept = false;
+            for (const auto& x : e2)
+                if (x.kind == K::Seen && x.sighting.id == "upnp-aaa") kept = x.sighting.name == "ZYXEL EMG6726-B10A";
+            check("merge: an undescribed uuid keeps its sibling's name, not the address", kept);
+        }
         e = m.take(nd::Merger::From::Avahi, {K::Note, {}, "avahi says hi"});
         check("merge: notes pass through", e.size() == 1 && e[0].note == "avahi says hi");
+    }
+
+    // ── s006: printers and scanners (Scott's avahi-browse, Nov 3) ───────────
+    {
+        check("types: IPP / LPD / raw / eSCL browsed",
+              nd::kind_for_type("_ipp._tcp") == "ipp" && nd::kind_for_type("_ipps._tcp") == "ipps" &&
+              nd::kind_for_type("_printer._tcp") == "lpd" && nd::kind_for_type("_pdl-datastream._tcp") == "pdl" &&
+              nd::kind_for_type("_uscan._tcp") == "uscan" && nd::kind_for_type("_uscans._tcp") == "uscans" &&
+              nd::kind_for_type("_scanner._tcp") == "scanner");
+        nd::Aggregator a;
+        const char* bro = "BRW90489A9696AE.local";
+        auto e = a.resolved(key("Brother HL-L2360D series", "_http._tcp"), {bro, "192.168.1.175", 80, {}});
+        check("printer: web page alone -> named by host", e.size() == 1 && e[0].sighting.name == "BRW90489A9696AE");
+        e = a.resolved(key("Brother HL-L2360D series", "_ipp._tcp"), {bro, "192.168.1.175", 631,
+                       {"rp=ipp/print", "ty=Brother HL-L2360D series", "usb_MFG=Brother", "usb_MDL=HL-L2360D series",
+                        "adminurl=http://BRW90489A9696AE.local./net/net/airprint.html"}});
+        check("printer: IPP -> named by its instance, model from ty=", e.size() == 1 &&
+              e[0].sighting.id == "brw90489a9696ae.local" && e[0].sighting.name == "Brother HL-L2360D series" &&
+              e[0].sighting.model == "Brother HL-L2360D series",
+              e.empty() ? "" : e[0].sighting.name + " / " + e[0].sighting.model);
+        a.resolved(key("Brother HL-L2360D series", "_printer._tcp"), {bro, "192.168.1.175", 515, {"ty=Brother HL-L2360D series"}});
+        e = a.resolved(key("Brother HL-L2360D series", "_pdl-datastream._tcp"), {bro, "192.168.1.175", 9100, {}});
+        check("printer: IPP + LPD + raw + Web are four services", e.size() == 1 && e[0].sighting.services.size() == 4);
+
+        const char* ep = "EPSON5D07A1.local";
+        a.resolved(key("EPSON ET-8550 Series", "_uscan._tcp"), {ep, "192.168.1.221", 443, {"ty=EPSON ET-8550 Series"}});
+        e = a.resolved(key("EPSON ET-8550 Series", "_ipps._tcp"), {ep, "192.168.1.221", 631, {"TLS=1.2", "rp=ipp/print", "ty=EPSON ET-8550 Series"}});
+        check("printer + scanner: one device, named by its instance", e.size() == 1 && e[0].sighting.name == "EPSON ET-8550 Series");
+        e = a.resolved(key("EPSON5D07A1", "_smb._tcp"), {ep, "192.168.1.221", 445, {}});
+        check("printer: SMB doesn't take the name back", e.size() == 1 && e[0].sighting.name == "EPSON ET-8550 Series" &&
+              e[0].sighting.services.size() == 3);
+        e = a.resolved(key("EPSON5D07A1", "_device-info._tcp"), {ep, "192.168.1.221", 0, {"model=ET-8550"}});
+        check("printer: device-info's model wins over ty=", e.size() == 1 && e[0].sighting.model == "ET-8550");
+        e = a.resolved(key("iPhone", "_apple-mobdev2._tcp"), {"iphone.local", "192.168.1.50", 32498, {}});
+        check("unknown type: the device has no services", e.size() == 1 && e[0].sighting.services.empty());
     }
 
     std::cout << "-----------------------------------------------\n"

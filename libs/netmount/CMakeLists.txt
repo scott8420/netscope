@@ -3,7 +3,7 @@
 # GNOME Keyring through gvfs, not through code of ours (see Mounter.hpp).
 pkg_check_modules(GIOMM REQUIRED IMPORTED_TARGET giomm-2.68)
 
-add_library(netmount STATIC src/Places.cpp src/Mounter.cpp)
+add_library(netmount STATIC src/Places.cpp src/Mounter.cpp src/Nfs.cpp)
 target_include_directories(netmount PUBLIC include)
 target_link_libraries(netmount PUBLIC netscope_core PkgConfig::GIOMM)
 

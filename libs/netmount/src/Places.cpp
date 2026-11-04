@@ -25,9 +25,17 @@ std::string scheme_for(const std::string& kind) {
 
 std::vector<std::string> schemes_of(const core::Sighting& s) {
     std::vector<std::string> out;
-    for (const char* k : {"smb", "sftp", "nfs"})
-        if (has_service(s, k)) out.push_back(scheme_for(k));
+    // SFTP is ssh's file subsystem: a device that advertises plain ssh
+    // (RASPI does) almost always serves it too.
+    if (has_service(s, "smb")) out.push_back("smb");
+    if (has_service(s, "sftp") || has_service(s, "ssh")) out.push_back("sftp");
+    if (has_service(s, "nfs")) out.push_back("nfs");
     return out;
+}
+
+Share sftp_share(const std::string& host) {
+    // The whole server: gvfs opens it at the login's home folder.
+    return {"Files (SFTP)", root_uri("sftp", host)};
 }
 
 std::string host_for(const core::Sighting& s) {

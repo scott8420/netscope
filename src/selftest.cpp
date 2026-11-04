@@ -14,6 +14,7 @@
 //
 //   cmake --build build --target netscope_selftest && ./build/netscope_selftest
 
+#include "core/Launch.hpp"
 #include "core/Devices.hpp"
 #include "core/Feed.hpp"
 #include "core/Recents.hpp"
@@ -316,6 +317,44 @@ int main() {
             check("rows: online by name, stale last", titles(rs) == "RASPI,tc01,tc02(stale),", titles(rs));
             check("rows: services read as kinds", rs.size() == 3 && rs[0].services == "SMB, SSH" && rs[1].services == "AFP");
             check("rows: no invented facts", rs.size() == 3 && rs[0].address.empty() && rs[0].model.empty());
+        }
+
+        {   // s006: a printer, and Scott's router named by its own model.
+            Network n; Choices c;
+            n.seen(Sighting{"upnp-r", "ZYXEL EMG6726-B10A", "ZYXEL EMG6726-B10A", {"192.168.1.1"}, {{"upnp", 1991}}});
+            n.seen(Sighting{"epson5d07a1.local", "EPSON ET-8550 Series", "ET-8550", {"192.168.1.221"},
+                            {{"http", 80}, {"ipp", 631}, {"ipps", 631}, {"lpd", 515}, {"uscan", 443}}});
+            const auto rs = rows(n, c, false);
+            check("rows: a model equal to the name isn't repeated", rs.size() == 2 && rs[1].title == "ZYXEL EMG6726-B10A" &&
+                  rs[1].model.empty());
+            check("rows: printer services read as Printer, Scanner", rs.size() == 2 && rs[0].model == "ET-8550" &&
+                  rs[0].services == "Web, Printer, Scanner", rs.empty() ? "" : rs[0].services);
+            namespace la = netscope::core::launch;
+            const Sighting epson{"epson5d07a1.local", "EPSON", "", {"192.168.1.221"}, {{"http", 80}, {"http", 8080}, {"ipps", 631}}};
+            check("web: http on 80, no port in the URL", la::web_url(epson) == "http://epson5d07a1.local/", la::web_url(epson));
+            const Sighting tls{"nas.local", "", "", {}, {{"http", 5000}, {"https", 5001}}};
+            check("web: lowest odd port, https before http", la::web_url(tls) == "https://nas.local:5001/", la::web_url(tls));
+            const Sighting both{"nas.local", "", "", {}, {{"http", 80}, {"https", 443}}};
+            check("web: https on 443 first", la::web_url(both) == "https://nas.local/");
+            const Sighting router{"upnp-1234", "ZYXEL", "", {"fe80::1", "192.168.1.1"}, {{"upnp", 1991}, {"http", 80}}};
+            check("web: a UPnP-only device by its IPv4", la::web_url(router) == "http://192.168.1.1/", la::web_url(router));
+            const Sighting v6{"upnp-9", "", "", {"fe80::2"}, {{"http", 8080}}};
+            check("web: IPv6 in brackets", la::web_url(v6) == "http://[fe80::2]:8080/", la::web_url(v6));
+            check("web: none -> empty", la::web_url(Sighting{"tc01.local", "", "", {}, {{"afp", 548}}}).empty());
+            const Sighting raspi{"raspi.local", "RASPI", "", {"192.168.1.30"}, {{"smb", 445}, {"ssh", 22}}};
+            check("ssh: the host name", la::ssh_args(raspi) == std::vector<std::string>{"raspi.local"});
+            const Sighting odd{"nas.local", "", "", {}, {{"sftp", 2222}}};
+            check("ssh: another port from sftp-ssh", la::ssh_args(odd) == std::vector<std::string>{"-p", "2222", "nas.local"});
+            check("ssh: none -> empty", la::ssh_args(epson).empty());
+            const auto argv = la::terminal_argv("ptyxis", {"raspi.local"});
+            check("terminal: ptyxis --new-window -- sh -c ... ssh raspi.local",
+                  argv.size() == 8 && argv[0] == "ptyxis" && argv[1] == "--new-window" && argv[2] == "--" &&
+                  argv[3] == "sh" && argv[6] == "ssh" && argv[7] == "raspi.local");
+            check("terminal: xterm -e", la::terminal_argv("xterm", {"h"})[1] == "-e" &&
+                  la::terminal_argv("xdg-terminal-exec", {"h"})[1] == "sh");
+            check("labels: the detail names the protocol", service_detail("ipp") == "Printer (IPP)" &&
+                  service_detail("pdl") == "Printer (raw)" && service_detail("uscan") == "Scanner (eSCL)" &&
+                  service_detail("afp") == "AFP");
         }
 
         {   // The feed is not a user choice: re-announcing is quiet, and

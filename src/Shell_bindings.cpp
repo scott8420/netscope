@@ -57,6 +57,8 @@ void Shell::bind_actions() {  // bindings: actions + recents group
     m_fix_ready.connect(sigc::mem_fun(*this, &Shell::on_fix_done));
     m_afp_ready.connect(sigc::mem_fun(*this, &Shell::on_afp_ready));
     add_action("device-shares",    sigc::mem_fun(*this, &Shell::on_device_shares));
+    add_action("device-web",       sigc::mem_fun(*this, &Shell::on_device_web));
+    add_action("device-ssh",       sigc::mem_fun(*this, &Shell::on_device_ssh));
     // Milestone 6: any mount coming or going -- ours, or an eject from the
     // Nautilus sidebar -- repaints the share rows.
     m_mounter = std::make_unique<netmount::Mounter>();

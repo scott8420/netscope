@@ -160,6 +160,8 @@ std::vector<Row> rows(const Network& net, const Choices& ch, bool show_hidden);
 
 // "afp" -> "AFP", "device-info" -> "" (bookkeeping, not something to connect to).
 std::string service_label(const std::string& kind);
+// The detail line's longer label: "Printer (IPP)", "Scanner (eSCL)", ...
+std::string service_detail(const std::string& kind);
 
 // ── the verbs: every user choice the Devices page offers ───────────────────
 namespace devices {

@@ -107,10 +107,13 @@ private:
     void on_fix_done();                          // category: handler: main thread -- say what NM did, re-diagnose
     // Milestone 6 -- shares. Mounts are not choices: no journal, no undo step;
     // Unmount is the visible opposite (ARCHITECTURE).
-    void on_device_shares();                     // category: handler: list the selected device's SMB shares
+    void on_device_shares();                     // category: handler: list the selected device's shares (AFP; else SMB + SFTP + NFS)
     void on_share_mount(const std::string& uri);   // category: handler: mount one share (password dialog -> Keyring)
     void on_share_unmount(const std::string& uri); // category: handler: unmount it
     void on_share_open(const std::string& uri);    // category: handler: open it in the file manager
+    // Milestone 15 -- open the device's web admin / an ssh terminal. Not choices.
+    void on_device_web();                        // category: handler: the web page in the default browser
+    void on_device_ssh();                        // category: handler: ssh in a terminal
     // Milestone 7 -- pinning IS a choice: through the journal, Ctrl+Z undoes it.
     void on_share_pin(const netmount::Share& share, bool on);  // category: handler: pin / unpin a share
 
@@ -126,6 +129,7 @@ private:
     void select_device(const std::string& id, bool keys);  // category: helper: select (+ keyboard) after a repaint
     void update_undo_ui();                        // category: helper: Undo / Redo say what they would do, grey when nothing
     bool focus_is_text() const;                   // category: helper: the keyboard is in a text box (its own Ctrl+Z)
+    std::string shares_key(const core::Sighting& s) const;   // category: helper: the busy key of a device's Shares press
     void repaint_shares();                        // category: helper: the selected device's shares + their state
     // Milestone 10 -- AFP (Shell_afp.cpp).
     bool device_has_afp(const core::Sighting& s) const;   // category: helper
@@ -187,6 +191,8 @@ private:
     widgets::Label       m_diag_said;          // the findings, one plain line each
     widgets::Button      m_fix_button;         // milestone 9: "Fix" -- shown only when a finding offers one
     widgets::Button      m_shares_button;      // milestone 6: "Shares"
+    widgets::Button      m_web_button;         // milestone 15: "Web page"
+    widgets::Button      m_ssh_button;         // milestone 15: "Terminal"
     widgets::ListBox     m_share_list;         // one row per share: name, state, Mount/Unmount, Open
     widgets::Label       m_share_said;         // what the last share action said
     widgets::Button    m_undo_button;

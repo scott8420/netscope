@@ -18,7 +18,23 @@ constexpr TypeKind kTypes[] = {
     {"_https._tcp",      "https"},
     {"_device-info._tcp","device-info"},   // model= in TXT; no connection
     {"_adisk._tcp",      "adisk"},         // Time Machine disk; bookkeeping
+    // Printers and scanners (s006): named by their instance, model from ty=.
+    {"_ipp._tcp",        "ipp"},
+    {"_ipps._tcp",       "ipps"},
+    {"_printer._tcp",    "lpd"},
+    {"_pdl-datastream._tcp", "pdl"},
+    {"_uscan._tcp",      "uscan"},
+    {"_uscans._tcp",     "uscans"},
+    {"_scanner._tcp",    "scanner"},
 };
+
+// A printer's or scanner's instance name says what it is ("Brother HL-L2360D
+// series"); its host name doesn't ("BRW90489A9696AE"). Lower rank wins.
+int name_rank(const std::string& kind) {
+    static const char* kOrder[] = {"ipp", "ipps", "lpd", "pdl", "uscan", "uscans", "scanner"};
+    for (int i = 0; i < 7; ++i) if (kind == kOrder[i]) return i;
+    return -1;
+}
 
 bool is_v4(const std::string& a) { return a.find(':') == std::string::npos; }
 // This machine's own services resolve to loopback too; that's no use to reach
@@ -52,9 +68,11 @@ core::Sighting Aggregator::build(const core::DeviceId& id) const {
     core::Sighting s;
     s.id = id;
     std::vector<std::string> v4, v6;
+    int best = 99;          // rank of the instance name chosen so far
+    std::string ty;         // a printer's ty= (its model), when device-info has none
     for (const auto& [k, r] : m_services) {
         if (device_id(r.host) != id) continue;
-        if (s.name.empty()) {
+        if (s.name.empty() && best == 99) {
             const auto dot = r.host.find('.');
             s.name = r.host.substr(0, dot);
         }
@@ -68,10 +86,16 @@ core::Sighting Aggregator::build(const core::DeviceId& id) const {
         if (!svc.kind.empty() && svc.kind != "device-info" && svc.kind != "adisk" &&
             std::find(s.services.begin(), s.services.end(), svc) == s.services.end())
             s.services.push_back(svc);
+        if (const int rank = name_rank(svc.kind); rank >= 0) {
+            if (rank < best && !k.name.empty()) { best = rank; s.name = k.name; }
+            for (const auto& t : r.txt)
+                if (t.rfind("ty=", 0) == 0 && t.size() > 3 && ty.empty()) ty = t.substr(3);
+        }
         if (k.type == "_device-info._tcp")
             for (const auto& t : r.txt)
                 if (t.rfind("model=", 0) == 0) s.model = t.substr(6);
     }
+    if (s.model.empty()) s.model = ty;
     const auto order = [](const std::string& a, const std::string& b) {
         if (is_loopback(a) != is_loopback(b)) return !is_loopback(a);
         return a < b;

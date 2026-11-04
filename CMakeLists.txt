@@ -41,6 +41,7 @@ add_library(netscope_core STATIC
     # a Source thread pushes into an Inbox the UI drains. docs/undo.md.
     src/core/Devices.cpp
     src/core/Feed.cpp
+    src/core/Launch.cpp
 )
 target_include_directories(netscope_core PUBLIC include)
 target_link_libraries(netscope_core PUBLIC Threads::Threads)

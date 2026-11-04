@@ -102,7 +102,8 @@ class ShareItem extends PopupMenu.PopupBaseMenuItem {
         }));
         const text = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
         text.add_child(new St.Label({text: name, style_class: 'netscope-row-name'}));
-        const kind = uri.startsWith('afp://') ? 'AFP' : uri.startsWith('smb://') ? 'SMB' : '';
+        const kind = uri.startsWith('afp://') ? 'AFP' : uri.startsWith('smb://') ? 'SMB' :
+                     uri.startsWith('sftp://') ? 'SFTP' : uri.startsWith('nfs://') ? 'NFS' : '';
         text.add_child(new St.Label({
             text: (busy ? 'mounting… · ' : mounted ? MARK_OK + 'mounted · ' : '') +
                 `on ${shortHost(device)}` + (kind ? ` · ${kind}` : ''),

@@ -141,7 +141,21 @@ std::string service_label(const std::string& kind) {
     if (kind == "ssh")  return "SSH";
     if (kind == "sftp") return "SFTP";
     if (kind == "http" || kind == "https") return "Web";
+    if (kind == "ipp" || kind == "ipps" || kind == "lpd" || kind == "pdl") return "Printer";
+    if (kind == "uscan" || kind == "uscans" || kind == "scanner") return "Scanner";
     return kind;
+}
+
+std::string service_detail(const std::string& kind) {
+    if (kind == "ipp")     return "Printer (IPP)";
+    if (kind == "ipps")    return "Printer (IPPS)";
+    if (kind == "lpd")     return "Printer (LPD)";
+    if (kind == "pdl")     return "Printer (raw)";
+    if (kind == "uscan")   return "Scanner (eSCL)";
+    if (kind == "uscans")  return "Scanner (eSCL, TLS)";
+    if (kind == "scanner") return "Scanner";
+    if (kind == "https")   return "Web (TLS)";
+    return service_label(kind);
 }
 
 namespace {
@@ -170,7 +184,8 @@ std::vector<Row> rows(const Network& net, const Choices& ch, bool show_hidden) {
         r.id         = id;
         r.advertised = s.name.empty() ? id : s.name;
         r.title      = c.nickname.empty() ? r.advertised : c.nickname;
-        r.model      = s.model;
+        // "ZYXEL EMG6726-B10A · ZYXEL EMG6726-B10A" says it once.
+        r.model      = lower(trim(s.model)) == lower(trim(r.advertised)) ? std::string{} : s.model;
         r.address    = s.addresses.empty() ? std::string{} : s.addresses.front();
         for (const auto& svc : s.services) {
             const auto l = service_label(svc.kind);

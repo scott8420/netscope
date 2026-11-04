@@ -54,6 +54,10 @@ public:
     std::vector<std::string> mount_roots() const;
     bool is_mounted(const std::string& uri) const { return netmount::is_mounted(uri, mount_roots()); }
 
+    // Where Files should open a mounted share: the mount's default location
+    // (SFTP: the login's home folder, not "/"); the URI itself otherwise.
+    std::string open_location(const std::string& uri) const;
+
     // Any mount came or went (ours, Nautilus's, an eject from the sidebar).
     void set_on_change(std::function<void()> f) { m_changed = std::move(f); }
 

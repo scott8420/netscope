@@ -1,4 +1,6 @@
 #include "Shell.hpp"
+#include "core/Launch.hpp"
+#include "netmount/Nfs.hpp"
 #include "AboutWindow.hpp"
 #include "ShortcutsDialog.hpp"
 #include "Log.hpp"
@@ -13,6 +15,8 @@
 #include <filesystem>
 #include <glibmm/markup.h>
 #include <giomm/appinfo.h>
+#include <glibmm/spawn.h>
+#include <glibmm/miscutils.h>
 
 #include <algorithm>
 
@@ -209,45 +213,80 @@ void Shell::on_show_hidden() {  // handler: a view setting -- not a step
 // answers repaint. The password dialog is GTK's own: "Remember forever" puts
 // the password in GNOME Keyring through gvfs, and gvfs finds it there next time.
 
-void Shell::on_device_shares() {  // handler: list the selected device's shares (AFP first, else SMB)
+void Shell::on_device_shares() {  // handler: list the selected device's shares (AFP first, else SMB + SFTP + NFS)
     const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
     if (!seen || !m_mounter) return;
     const auto& s = seen->sighting;
     const auto schemes = netmount::schemes_of(s);
-    const bool smb = std::find(schemes.begin(), schemes.end(), "smb") != schemes.end();
+    auto has = [&](const char* k) { return std::find(schemes.begin(), schemes.end(), k) != schemes.end(); };
     // Milestone 10: a device that speaks AFP is asked over AFP -- the Time
     // Capsule's SMB is SMB1, which current systems refuse.
     if (device_has_afp(s)) {
         if (netafp::available()) { list_afp_volumes(s); return; }
-        if (!smb) { m_share_notes[s.id] = netafp::missing(); repaint_shares(); return; }
+        if (schemes.empty()) { m_share_notes[s.id] = netafp::missing(); repaint_shares(); return; }
     }
-    if (!smb) {
-        m_share_notes[s.id] = "No AFP or SMB here. (SFTP and NFS come with a later milestone.)";
+    if (schemes.empty()) {
+        m_share_notes[s.id] = "No shares offered here (no AFP, SMB, SFTP or NFS advertised).";
         repaint_shares();
         return;
     }
-    const auto root = netmount::root_uri("smb", netmount::host_for(s));
-    if (m_share_busy.count(root)) return;
-    m_share_busy.insert(root);
-    m_share_notes[s.id] = "Asking " + root + "…";
+    const auto key = shares_key(s);
+    if (m_share_busy.count(key)) return;
+    const std::string id = s.id, host = netmount::host_for(s);
+    // Milestone 14: one press asks every protocol the device offers; the list
+    // and the note are written once, when the last one has answered.
+    struct Gather {
+        int pending = 0;
+        std::vector<netmount::Share> found;
+        std::vector<std::string> trouble;
+    };
+    auto g = std::make_shared<Gather>();
+    g->pending = int(has("smb")) + int(has("nfs"));
+    auto finish = [this, id, key, g] {
+        if (--g->pending > 0) return;
+        m_share_busy.erase(key);
+        m_shares[id] = g->found;
+        std::string note = g->found.empty() ? "No shares offered." :
+                           std::to_string(g->found.size()) + (g->found.size() == 1 ? " share." : " shares.");
+        for (const auto& t : g->trouble) note += "  " + t;
+        m_share_notes[id] = note;
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("shares {}: {} ({} trouble)", id, g->found.size(), g->trouble.size());
+        repaint_shares();
+    };
+    // SFTP needs no asking: the server is the share.
+    if (has("sftp")) g->found.push_back(netmount::sftp_share(host));
+    if (g->pending == 0) { ++g->pending; finish(); return; }
+    m_share_busy.insert(key);
+    m_share_notes[id] = "Asking " + netafp::short_host(id) + " for its shares…";
     repaint_shares();
-    if (auto lg = log::get(log::Area::Mounts)) lg->info("shares {}: listing {}", s.id, root);
-    const std::string id = s.id;
-    m_mounter->list_shares(root, mount_op(),
-        [this, id, root](const std::vector<netmount::Share>& found, const netmount::Outcome& o) {
-            m_share_busy.erase(root);
-            auto lg = log::get(log::Area::Mounts);
-            if (o.ok) {
-                m_shares[id] = found;
-                m_share_notes[id] = found.empty() ? "No shares offered." :
-                                    std::to_string(found.size()) + (found.size() == 1 ? " share." : " shares.");
-                if (lg) lg->info("shares {}: {}", id, found.size());
-            } else {
-                m_share_notes[id] = o.cancelled ? "" : "Couldn't list shares: " + o.says;
-                if (lg) lg->warn("shares {}: {}", id, o.says);
-            }
-            repaint_shares();
+    if (has("smb")) {
+        const auto root = netmount::root_uri("smb", host);
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("shares {}: listing {}", id, root);
+        m_mounter->list_shares(root, mount_op(),
+            [g, finish](const std::vector<netmount::Share>& found, const netmount::Outcome& o) {
+                if (o.ok) g->found.insert(g->found.begin(), found.begin(), found.end());
+                else if (!o.cancelled) g->trouble.push_back("SMB: " + o.says);
+                finish();
+            });
+    }
+    if (has("nfs")) {
+        std::string address;   // ours to dial: an IPv4 first, no name lookup
+        for (const auto& a : s.addresses) if (a.find(':') == std::string::npos) { address = a; break; }
+        if (address.empty() && !s.addresses.empty()) address = s.addresses.front();
+        const std::string who = netafp::short_host(id);
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("shares {}: NFS exports at {}", id, address);
+        run_afp([g, finish, address, who, host] {   // the worker is AFP's by name; any blocking call fits
+            const auto l = address.empty() ? netmount::nfs::Listing{false, {}, who + " has no address to ask."}
+                                           : netmount::nfs::list_exports(address, who);
+            return std::function<void()>([g, finish, l, host] {
+                if (l.ok)
+                    for (const auto& e : l.exports)
+                        g->found.push_back({netmount::nfs::export_name(e.path), netmount::nfs::export_uri(host, e.path)});
+                else g->trouble.push_back("NFS: " + l.says);
+                finish();
+            });
         });
+    }
 }
 
 void Shell::on_share_mount(const std::string& uri) {  // handler: mount one share
@@ -310,6 +349,60 @@ void Shell::mount_share(const std::string& uri) {  // handler: app.mount from th
     on_share_mount(uri);
 }
 
+// ── Milestone 15 -- web admin and ssh ──────────────────────────────────────
+// Opening is not a choice: no journal. What happened goes in the share line.
+
+namespace {
+std::string join(const std::vector<std::string>& v, const char* sep) {
+    std::string o;
+    for (const auto& x : v) { if (!o.empty()) o += sep; o += x; }
+    return o;
+}
+}  // namespace
+
+void Shell::on_device_web() {  // handler: the device's web page in the default browser
+    const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
+    if (!seen) return;
+    const auto url = core::launch::web_url(seen->sighting);
+    if (url.empty()) return;
+    try {
+        Gio::AppInfo::launch_default_for_uri(url);
+        m_share_notes[m_sel] = "Opened " + url + " in your browser.";
+        if (auto lg = log::get(log::Area::Mounts)) lg->info("web {}", url);
+    } catch (const Glib::Error& e) {
+        m_share_notes[m_sel] = "Couldn't open " + url + ": " + std::string(e.what());
+        if (auto lg = log::get(log::Area::Mounts)) lg->warn("web {}: {}", url, e.what());
+    }
+    repaint_shares();
+}
+
+void Shell::on_device_ssh() {  // handler: ssh in a terminal
+    const auto seen = m_sel.empty() ? std::nullopt : m_net.get(m_sel);
+    if (!seen) return;
+    const auto args = core::launch::ssh_args(seen->sighting);
+    if (args.empty()) return;
+    std::string term;
+    for (const auto& t : core::launch::terminals())
+        if (!Glib::find_program_in_path(t).empty()) { term = t; break; }
+    auto lg = log::get(log::Area::Mounts);
+    if (term.empty()) {
+        m_share_notes[m_sel] = "No terminal found (looked for " + join(core::launch::terminals(), ", ") + ").";
+        if (lg) lg->warn("ssh: no terminal");
+        repaint_shares();
+        return;
+    }
+    const auto argv = core::launch::terminal_argv(term, args);
+    try {
+        Glib::spawn_async("", argv, Glib::SpawnFlags::SEARCH_PATH);
+        m_share_notes[m_sel] = "ssh " + join(args, " ") + " -- in " + term + ".";
+        if (lg) lg->info("ssh: {} {}", term, join(args, " "));
+    } catch (const Glib::Error& e) {
+        m_share_notes[m_sel] = "Couldn't start " + term + ": " + std::string(e.what());
+        if (lg) lg->warn("ssh: {}: {}", term, e.what());
+    }
+    repaint_shares();
+}
+
 void Shell::on_share_pin(const netmount::Share& share, bool on) {  // handler: pin / unpin -- a choice, an undo step
     if (m_sel.empty()) return;
     core::devices::set_pinned(m_journal, m_choices, m_net, m_sel, core::Pin{share.name, share.uri}, on);
@@ -318,7 +411,9 @@ void Shell::on_share_pin(const netmount::Share& share, bool on) {  // handler: p
 void Shell::on_share_open(const std::string& uri) {  // handler: open it in the file manager
     try {
         // AFP: the FUSE mount point, not the afp:// URI (GVfs's AFP is the path that fails).
-        const std::string where = netafp::is_afp_uri(uri) ? std::string(Glib::filename_to_uri(afp_point(uri))) : uri;
+        // SFTP: the mount's home folder (milestone 14), not the server's "/".
+        const std::string where = netafp::is_afp_uri(uri) ? std::string(Glib::filename_to_uri(afp_point(uri)))
+                                : m_mounter ? m_mounter->open_location(uri) : uri;
         Gio::AppInfo::launch_default_for_uri(where);
         if (auto lg = log::get(log::Area::Mounts)) lg->info("open {}", uri);
     } catch (const Glib::Error& e) {

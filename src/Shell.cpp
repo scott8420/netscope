@@ -31,6 +31,8 @@ Shell::Shell()
       m_diag_said("shell.devices.diag_said"),
       m_fix_button("shell.devices.fix"),
       m_shares_button("shell.devices.shares"),
+      m_web_button("shell.devices.web"),
+      m_ssh_button("shell.devices.ssh"),
       m_share_list("shell.devices.share_list"),
       m_share_said("shell.devices.share_said"),
       m_undo_button("shell.devices.undo"),

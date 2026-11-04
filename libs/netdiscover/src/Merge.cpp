@@ -28,6 +28,13 @@ std::map<core::DeviceId, core::Sighting> Merger::merged() const {
             return a.kind != b.kind ? a.kind < b.kind : a.port < b.port;
         });
         if (host->model.empty()) host->model = u.model;
+        // A UPnP host still named by its address (its description not in yet)
+        // takes the name a folded sibling already has: no "192.168.1.1" flash.
+        const bool host_unnamed = host->name.empty() ||
+            std::find(host->addresses.begin(), host->addresses.end(), host->name) != host->addresses.end();
+        const bool u_named = !u.name.empty() &&
+            std::find(u.addresses.begin(), u.addresses.end(), u.name) == u.addresses.end();
+        if (host_unnamed && u_named) host->name = u.name;
     }
     return out;
 }
