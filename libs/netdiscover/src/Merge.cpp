@@ -7,14 +7,19 @@ namespace netscope::netdiscover {
 
 std::map<core::DeviceId, core::Sighting> Merger::merged() const {
     auto out = m_avahi;
-    for (const auto& [id, u] : m_ssdp) {
-        core::Sighting* host = nullptr;
+    // Into an Avahi device at the same address first; else into an earlier UPnP
+    // device at that address (a router's several uuids -> one row, the lowest id).
+    auto at = [&](const core::Sighting& u, bool want_upnp) -> core::Sighting* {
         for (auto& [hid, h] : out) {
-            if (hid.rfind("upnp-", 0) == 0) continue;   // fold into Avahi devices only
+            if ((hid.rfind("upnp-", 0) == 0) != want_upnp) continue;
             for (const auto& a : u.addresses)
-                if (std::find(h.addresses.begin(), h.addresses.end(), a) != h.addresses.end()) { host = &h; break; }
-            if (host) break;
+                if (std::find(h.addresses.begin(), h.addresses.end(), a) != h.addresses.end()) return &h;
         }
+        return nullptr;
+    };
+    for (const auto& [id, u] : m_ssdp) {
+        core::Sighting* host = at(u, false);
+        if (!host) host = at(u, true);
         if (!host) { out[id] = u; continue; }
         for (const auto& svc : u.services)
             if (std::find(host->services.begin(), host->services.end(), svc) == host->services.end())

@@ -144,6 +144,9 @@ core::Sighting Aggregator::build(const std::string& uuid, const Dev& d) const {
     s.services.push_back({"upnp", loc ? loc->port : 0});
     if (d.desc) {
         s.name = d.desc->friendly_name;
+        // The Wi-Fi Alliance (WPS) sub-device of a router calls itself "WFADevice":
+        // its model says more.
+        if (d.desc->device_type.find("wifialliance") != std::string::npos || s.name == "WFADevice") s.name.clear();
         std::string model = d.desc->model_name;
         if (!d.desc->manufacturer.empty() && model.rfind(d.desc->manufacturer, 0) != 0)
             model = d.desc->manufacturer + (model.empty() ? "" : " " + model);
@@ -155,7 +158,7 @@ core::Sighting Aggregator::build(const std::string& uuid, const Dev& d) const {
             else if (loc) s.services.push_back({"http", loc->port});   // relative URL: same server
         }
     }
-    if (s.name.empty()) s.name = loc ? loc->host : uuid;   // until the description says
+    if (s.name.empty()) s.name = !s.model.empty() ? s.model : loc ? loc->host : uuid;   // until the description says
     return s;
 }
 
@@ -182,9 +185,10 @@ std::vector<core::FeedEvent> Aggregator::reply(const Reply& r, Clock::time_point
         return report(uuid);
     }
     auto& d = m_devs[uuid];
-    const bool fresh = d.location != r.location;
-    // The root device's answer names the description; embedded ones repeat it.
-    if (fresh) { d.location = r.location; d.desc.reset(); }
+    // Some devices (Scott's ZyXEL router) answer one uuid from two LOCATIONs.
+    // Keep the first that gave a description; move only while there is none.
+    const bool fresh = d.location.empty() || (d.location != r.location && !d.desc);
+    if (fresh) d.location = r.location;
     if (!r.server.empty()) d.server = r.server;
     d.until = std::max(d.until, now + std::chrono::seconds(r.max_age));
     const bool want = fresh || (!d.desc && now - d.tried >= std::chrono::seconds(30));

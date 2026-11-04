@@ -7,7 +7,9 @@
 // Rule: a UPnP device whose address is one of an Avahi device's addresses is
 // folded INTO that device -- its services added, its model used when Avahi had
 // none -- and doesn't appear on its own. Otherwise it is listed under its own
-// id. Avahi's id wins, so nicknames and pins (keyed on the id) stay put.
+// id -- unless another UPnP device has its address (a router announces several
+// uuids): then they share one row under the lowest id. Avahi's id wins, so
+// nicknames and pins (keyed on the id) stay put.
 //
 // Each input replaces that source's view of one device; the Merger recomputes
 // the merged list and says what changed (Seen / Lost), so a fold is a Merged

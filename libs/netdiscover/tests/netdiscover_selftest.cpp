@@ -129,6 +129,19 @@ int main() {
         check("group: same uuid again -> nothing new, no refetch yet", ag.reply(r2, t0, &fetch).empty() && !fetch);
         ag.reply(r2, t0 + std::chrono::seconds(31), &fetch);
         check("group: still no description 30 s on -> fetch again", fetch);
+        {   // Scott's router: one uuid from two LOCATIONs -- no flip-flop once described.
+            sp::Aggregator z;
+            sp::Reply a = *r; a.location = "http://192.168.1.1:1991/a.xml";
+            sp::Reply b = *r; b.location = "http://192.168.1.1:1992/b.xml";
+            z.reply(a, t0, nullptr);
+            sp::Description wfa; wfa.friendly_name = "WFADevice"; wfa.manufacturer = "ZYXEL"; wfa.model_name = "EMG6726-B10A";
+            wfa.device_type = "urn:schemas-wifialliance-org:device:WFADevice:1";
+            auto ev = z.described(sp::uuid_of(a.usn), wfa);
+            check("router: WFADevice named by its model", ev.size() == 1 && ev[0].sighting.name == "ZYXEL EMG6726-B10A",
+                  ev.empty() ? "" : ev[0].sighting.name);
+            bool f2 = true;
+            check("router: second LOCATION once described -> nothing, no refetch", z.reply(b, t0, &f2).empty() && !f2);
+        }
         e = ag.described("4d696e69-444c-164e-9d41-b827eb0a1b2c", d);
         check("group: description -> name, model, Web from presentationURL", e.size() == 1 &&
               e[0].sighting.name == "RASPI: minidlna" &&
@@ -165,6 +178,14 @@ int main() {
         e = m.take(nd::Merger::From::Ssdp, {K::Lost, core::Sighting{"upnp-abc", {}, {}, {}, {}}, {}});
         check("merge: UPnP gone -> raspi back to its own services", e.size() == 1 && e[0].kind == K::Seen &&
               e[0].sighting == raspi);
+        const core::Sighting r2{"upnp-zzz", "Router", "Router", {"192.0.2.1"}, {{"upnp", 5001}}};
+        e = m.take(nd::Merger::From::Ssdp, {K::Seen, r2, {}});
+        bool merged2 = false, one = false;
+        for (const auto& x : e) {
+            merged2 = merged2 || (x.kind == K::Merged && x.sighting.id == "upnp-zzz");
+            one = one || (x.kind == K::Seen && x.sighting.id == "upnp-def" && x.sighting.services.size() == 2);
+        }
+        check("merge: two UPnP uuids at one address -> one row (lowest id)", (merged2 || e.size() == 1) && one);
         e = m.take(nd::Merger::From::Avahi, {K::Note, {}, "avahi says hi"});
         check("merge: notes pass through", e.size() == 1 && e[0].note == "avahi says hi");
     }
